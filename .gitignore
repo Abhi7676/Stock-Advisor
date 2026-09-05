@@ -1,0 +1,28 @@
+# Environment variables / API Keys
+.env
+*.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Databases and Local Data Cache
+*.sqlite
+*.sqlite3
+*.db
+*.duckdb
+*.csv
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

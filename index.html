@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>F&O AI Signal Advisor — Nifty & BankNifty | India</title>
+  <meta name="description" content="AI-powered Nifty 50 & Bank Nifty F&O options CALL/PUT signal advisor using live NSE data and Google Gemini. Free, real-time.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ── Top Scrolling Market Marquee Ticker ───────────────────── -->
+  <div class="ticker-wrap">
+    <div class="ticker-move" id="tickerContainer">
+      <div class="ticker-item"><span class="ticker-name">NIFTY 50</span><span class="ticker-price">₹23,813.30</span><span class="ticker-change neg">-1.01%</span></div>
+      <div class="ticker-item"><span class="ticker-name">BANK NIFTY</span><span class="ticker-price">₹57,009.85</span><span class="ticker-change neg">-0.70%</span></div>
+      <div class="ticker-item"><span class="ticker-name">SENSEX</span><span class="ticker-price">₹76,264.97</span><span class="ticker-change neg">-0.88%</span></div>
+      <div class="ticker-item"><span class="ticker-name">INDIA VIX</span><span class="ticker-price">11.88</span><span class="ticker-change neg">-2.10%</span></div>
+      <div class="ticker-item"><span class="ticker-name">CRUDE OIL 21 SEP</span><span class="ticker-price">₹8,627.00</span><span class="ticker-change pos">+1.07%</span></div>
+      <div class="ticker-item"><span class="ticker-name">NATURAL GAS 25 SEP</span><span class="ticker-price">₹280.90</span><span class="ticker-change pos">+1.33%</span></div>
+    </div>
+  </div>
+
+  <!-- ── Header ──────────────────────────────────────────────── -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">🇮🇳</div>
+      <div>
+        <div class="brand-name">F&amp;O AI SIGNAL ADVISOR</div>
+        <div class="brand-tagline">Nifty 50 &amp; Bank Nifty • Powered by Google Gemini • 100% Free</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="status-pill" id="marketStatusPill">
+        <span class="pulse red" id="marketPulseDot"></span>
+        <span id="marketStatusText">Checking...</span>
+      </div>
+      <div class="status-pill" id="geminiPill">
+        <span class="pulse amber" id="geminiDot"></span>
+        <span id="geminiText">Gemini AI: Checking...</span>
+      </div>
+      <button class="btn btn-primary" id="btnRefreshAll">
+        🔄 Refresh Signals
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Refresh Countdown Bar ───────────────────────────────── -->
+  <div class="refresh-bar">
+    <span>Live NSE data • AI by <strong>Google Gemini</strong> (free) • Auto-refreshes every 15s</span>
+    <span>Next refresh in: <span class="countdown-text" id="countdownText">15s</span></span>
+  </div>
+
+  <!-- ── Main Dashboard Grid ─────────────────────────────────── -->
+  <div class="app-grid">
+
+    <!-- Disclaimer -->
+    <div class="disclaimer">
+      ⚠️ <strong>Risk Disclaimer:</strong> These AI signals are for educational/reference purposes only. F&O trading carries significant risk. Always apply your own judgment before placing trades on Groww. Never trade more than you can afford to lose.
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         SIGNAL CARDS — Nifty & BankNifty
+    ════════════════════════════════════════════ -->
+    <div class="signal-card">
+
+      <!-- NIFTY Signal Box -->
+      <div class="signal-box wait-box" id="niftySignalBox">
+        <div class="signal-index-row">
+          <span class="signal-index-name">📊 Nifty 50</span>
+          <div style="text-align:right">
+            <div class="signal-ltp" id="niftyLTP">₹ —</div>
+            <span class="signal-change" id="niftyChange">—</span>
+          </div>
+        </div>
+
+        <!-- Big Signal Badge -->
+        <div class="signal-badge wait" id="niftyBadge">
+          <span class="signal-emoji" id="niftyEmoji">⏳</span>
+          <div>
+            <div class="signal-main-text" id="niftySignalText">LOADING...</div>
+            <div class="signal-sub" id="niftyStrikeText">Fetching signal...</div>
+          </div>
+        </div>
+
+        <!-- Confidence Bar -->
+        <div class="confidence-row">
+          <span class="confidence-label">AI Confidence</span>
+          <div class="confidence-bar">
+            <div class="confidence-fill wait-fill" id="niftyConfBar" style="width:0%"></div>
+          </div>
+          <span class="confidence-pct" id="niftyConfPct" style="color:var(--wait)">—</span>
+        </div>
+
+        <!-- Trade Details -->
+        <div class="trade-details" id="niftyTradeDetails">
+          <div class="trade-stat">
+            <div class="trade-stat-label">Strike</div>
+            <div class="trade-stat-val" id="niftyStrikeVal">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Expiry</div>
+            <div class="trade-stat-val" id="niftyExpiry" style="font-size:.8rem">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Entry Premium</div>
+            <div class="trade-stat-val" id="niftyEntry">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Target Premium</div>
+            <div class="trade-stat-val" id="niftyTarget">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Stop Loss</div>
+            <div class="trade-stat-val" id="niftySL">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Lots @ ₹10K</div>
+            <div class="trade-stat-val" id="niftyLots">—</div>
+          </div>
+        </div>
+
+        <!-- AI Reasoning -->
+        <div class="reasoning-box">
+          <div class="reasoning-label">🤖 AI Reasoning</div>
+          <div id="niftyReasoning">Waiting for analysis...</div>
+        </div>
+
+        <!-- Recommended Holding Time & Trade Execution Tab -->
+        <div class="execution-card" id="niftyExecCard">
+          <div class="exec-header">
+            <span class="exec-icon">⏱️</span>
+            <span class="exec-title">TRADE EXECUTION &amp; HOLDING GUIDE</span>
+          </div>
+          <div class="exec-body">
+            <div class="exec-row">
+              <span class="exec-label">🛒 Action Plan:</span>
+              <span class="exec-val" id="niftyActionSummary">Wait for setup...</span>
+            </div>
+            <div class="exec-row">
+              <span class="exec-label">⏱️ Holding Time:</span>
+              <span class="exec-val" id="niftyHoldTime">0 Mins — Stay on Sidelines</span>
+            </div>
+            <div class="exec-row">
+              <span class="exec-label">🎯 Target / Exit:</span>
+              <span class="exec-val" id="niftyExitRule">Preserve capital</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bias Score Meter -->
+        <div>
+          <div style="font-size:.72rem;color:var(--text-3);margin-bottom:4px;">Market Bias Score <span id="niftyBiasScore" style="color:var(--text-2);font-family:var(--mono)">—</span></div>
+          <div class="bias-meter">
+            <div class="bias-marker" id="niftyBiasMarker" style="left:50%"></div>
+          </div>
+          <div class="bias-labels"><span>Strong Bearish</span><span>Neutral</span><span>Strong Bullish</span></div>
+        </div>
+      </div>
+
+      <!-- BANKNIFTY Signal Box -->
+      <div class="signal-box wait-box" id="bankNiftySignalBox">
+        <div class="signal-index-row">
+          <span class="signal-index-name">🏦 Bank Nifty</span>
+          <div style="text-align:right">
+            <div class="signal-ltp" id="bankNiftyLTP">₹ —</div>
+            <span class="signal-change" id="bankNiftyChange">—</span>
+          </div>
+        </div>
+
+        <div class="signal-badge wait" id="bankNiftyBadge">
+          <span class="signal-emoji" id="bankNiftyEmoji">⏳</span>
+          <div>
+            <div class="signal-main-text" id="bankNiftySignalText">LOADING...</div>
+            <div class="signal-sub" id="bankNiftyStrikeText">Fetching signal...</div>
+          </div>
+        </div>
+
+        <div class="confidence-row">
+          <span class="confidence-label">AI Confidence</span>
+          <div class="confidence-bar">
+            <div class="confidence-fill wait-fill" id="bnConfBar" style="width:0%"></div>
+          </div>
+          <span class="confidence-pct" id="bnConfPct" style="color:var(--wait)">—</span>
+        </div>
+
+        <div class="trade-details" id="bnTradeDetails">
+          <div class="trade-stat">
+            <div class="trade-stat-label">Strike</div>
+            <div class="trade-stat-val" id="bnStrikeVal">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Expiry</div>
+            <div class="trade-stat-val" id="bnExpiry" style="font-size:.8rem">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Entry Premium</div>
+            <div class="trade-stat-val" id="bnEntry">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Target Premium</div>
+            <div class="trade-stat-val" id="bnTarget">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Stop Loss</div>
+            <div class="trade-stat-val" id="bnSL">—</div>
+          </div>
+          <div class="trade-stat">
+            <div class="trade-stat-label">Lots @ ₹10K</div>
+            <div class="trade-stat-val" id="bnLots">—</div>
+          </div>
+        </div>
+
+        <div class="reasoning-box">
+          <div class="reasoning-label">🤖 AI Reasoning</div>
+          <div id="bnReasoning">Waiting for analysis...</div>
+        </div>
+
+        <!-- Recommended Holding Time & Trade Execution Tab -->
+        <div class="execution-card" id="bnExecCard">
+          <div class="exec-header">
+            <span class="exec-icon">⏱️</span>
+            <span class="exec-title">TRADE EXECUTION &amp; HOLDING GUIDE</span>
+          </div>
+          <div class="exec-body">
+            <div class="exec-row">
+              <span class="exec-label">🛒 Action Plan:</span>
+              <span class="exec-val" id="bnActionSummary">Wait for setup...</span>
+            </div>
+            <div class="exec-row">
+              <span class="exec-label">⏱️ Holding Time:</span>
+              <span class="exec-val" id="bnHoldTime">0 Mins — Stay on Sidelines</span>
+            </div>
+            <div class="exec-row">
+              <span class="exec-label">🎯 Target / Exit:</span>
+              <span class="exec-val" id="bnExitRule">Preserve capital</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:.72rem;color:var(--text-3);margin-bottom:4px;">Market Bias Score <span id="bnBiasScore" style="color:var(--text-2);font-family:var(--mono)">—</span></div>
+          <div class="bias-meter">
+            <div class="bias-marker" id="bnBiasMarker" style="left:50%"></div>
+          </div>
+          <div class="bias-labels"><span>Strong Bearish</span><span>Neutral</span><span>Strong Bullish</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         NIFTY: Technicals + PCR
+    ════════════════════════════════════════════ -->
+    <div class="panel">
+      <div class="panel-title">
+        <div class="panel-title-left"><span>📈</span> Nifty 50 — Technicals &amp; PCR</div>
+        <span style="font-size:.7rem;color:var(--text-3)" id="niftyDataSrc">—</span>
+      </div>
+
+      <!-- PCR Gauge -->
+      <div style="margin-bottom:16px;">
+        <div style="font-size:.75rem;color:var(--text-3);margin-bottom:4px;">Put-Call Ratio (PCR)</div>
+        <div class="pcr-gauge-row">
+          <div>
+            <div class="pcr-value" id="niftyPCR">—</div>
+            <div class="pcr-label" id="niftyPCRSignal">—</div>
+          </div>
+          <div class="pcr-bar-wrap">
+            <div class="pcr-bar"><div class="pcr-fill" id="niftyPCRFill" style="width:50%"></div></div>
+            <div class="pcr-zones">
+              <span style="color:var(--put)">Bearish &lt;0.8</span>
+              <span>Neutral 0.8-1.2</span>
+              <span style="color:var(--call)">Bullish &gt;1.2</span>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:.72rem;color:var(--text-3);margin-top:6px;">
+          Max Pain: <span style="color:var(--text-1);font-family:var(--mono);font-weight:600" id="niftyMaxPain">—</span>
+          &nbsp;|&nbsp; OI Range: <span style="color:var(--text-1);font-family:var(--mono);font-weight:600" id="niftyOIRange">—</span>
+        </div>
+      </div>
+
+      <!-- Technical Indicators -->
+      <div style="font-size:.75rem;color:var(--text-3);margin-bottom:8px;">Technical Indicators (5-min)</div>
+      <div class="indicators-grid" id="niftyIndicators">
+        <div class="ind-box"><div class="ind-name">RSI (14)</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div><div class="ind-sig neut skeleton">—</div></div>
+        <div class="ind-box"><div class="ind-name">MACD</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div><div class="ind-sig neut skeleton">—</div></div>
+        <div class="ind-box"><div class="ind-name">EMA Cross</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div><div class="ind-sig neut skeleton">—</div></div>
+        <div class="ind-box"><div class="ind-name">Supertrend</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div><div class="ind-sig neut skeleton">—</div></div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         BANKNIFTY: Technicals + PCR
+    ════════════════════════════════════════════ -->
+    <div class="panel">
+      <div class="panel-title">
+        <div class="panel-title-left"><span>🏦</span> Bank Nifty — Technicals &amp; PCR</div>
+        <span style="font-size:.7rem;color:var(--text-3)" id="bnDataSrc">—</span>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="font-size:.75rem;color:var(--text-3);margin-bottom:4px;">Put-Call Ratio (PCR)</div>
+        <div class="pcr-gauge-row">
+          <div>
+            <div class="pcr-value" id="bnPCR">—</div>
+            <div class="pcr-label" id="bnPCRSignal">—</div>
+          </div>
+          <div class="pcr-bar-wrap">
+            <div class="pcr-bar"><div class="pcr-fill" id="bnPCRFill" style="width:50%"></div></div>
+            <div class="pcr-zones">
+              <span style="color:var(--put)">Bearish &lt;0.8</span>
+              <span>Neutral 0.8-1.2</span>
+              <span style="color:var(--call)">Bullish &gt;1.2</span>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:.72rem;color:var(--text-3);margin-top:6px;">
+          Max Pain: <span style="color:var(--text-1);font-family:var(--mono);font-weight:600" id="bnMaxPain">—</span>
+          &nbsp;|&nbsp; OI Range: <span style="color:var(--text-1);font-family:var(--mono);font-weight:600" id="bnOIRange">—</span>
+        </div>
+      </div>
+
+      <div style="font-size:.75rem;color:var(--text-3);margin-bottom:8px;">Technical Indicators (5-min)</div>
+      <div class="indicators-grid" id="bnIndicators">
+        <div class="ind-box"><div class="ind-name">RSI (14)</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div></div>
+        <div class="ind-box"><div class="ind-name">MACD</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div></div>
+        <div class="ind-box"><div class="ind-name">EMA Cross</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div></div>
+        <div class="ind-box"><div class="ind-name">Supertrend</div><div class="ind-value skeleton" style="width:60%;margin:4px auto">—</div></div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         NIFTY Options Chain
+    ════════════════════════════════════════════ -->
+    <div class="panel">
+      <div class="panel-title">
+        <div class="panel-title-left"><span>🔢</span> Nifty 50 — Options Chain</div>
+        <span style="font-size:.72rem;color:var(--accent)" id="niftyExpLabel">—</span>
+      </div>
+      <div class="chain-wrapper">
+        <table class="chain-table">
+          <thead>
+            <tr>
+              <th class="call-head" colspan="3">CALL (CE)</th>
+              <th class="strike-head">STRIKE</th>
+              <th class="put-head" colspan="3">PUT (PE)</th>
+            </tr>
+            <tr>
+              <th class="call-head">OI</th>
+              <th class="call-head">LTP</th>
+              <th class="call-head">IV</th>
+              <th class="strike-head">—</th>
+              <th class="put-head">IV</th>
+              <th class="put-head">LTP</th>
+              <th class="put-head">OI</th>
+            </tr>
+          </thead>
+          <tbody id="niftyChainBody">
+            <tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:20px;">Loading options chain...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         BANKNIFTY Options Chain
+    ════════════════════════════════════════════ -->
+    <div class="panel">
+      <div class="panel-title">
+        <div class="panel-title-left"><span>🔢</span> Bank Nifty — Options Chain</div>
+        <span style="font-size:.72rem;color:var(--accent)" id="bnExpLabel">—</span>
+      </div>
+      <div class="chain-wrapper">
+        <table class="chain-table">
+          <thead>
+            <tr>
+              <th class="call-head" colspan="3">CALL (CE)</th>
+              <th class="strike-head">STRIKE</th>
+              <th class="put-head" colspan="3">PUT (PE)</th>
+            </tr>
+            <tr>
+              <th class="call-head">OI</th>
+              <th class="call-head">LTP</th>
+              <th class="call-head">IV</th>
+              <th class="strike-head">—</th>
+              <th class="put-head">IV</th>
+              <th class="put-head">LTP</th>
+              <th class="put-head">OI</th>
+            </tr>
+          </thead>
+          <tbody id="bnChainBody">
+            <tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:20px;">Loading options chain...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         Signal History
+    ════════════════════════════════════════════ -->
+    <div class="panel" style="grid-column: 1 / -1;">
+      <div class="panel-title">
+        <div class="panel-title-left"><span>📋</span> Signal History</div>
+        <button class="btn btn-sm" id="btnClearHistory">Clear</button>
+      </div>
+      <div class="history-list" id="historyList">
+        <div style="text-align:center;padding:20px;color:var(--text-3);">No signals yet — loading...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Footer ──────────────────────────────────────────────── -->
+  <footer>
+    <strong>F&amp;O AI Signal Advisor</strong> — NSE India live data • Google Gemini AI • 100% Free &amp; Private •
+    Budget: ₹10,000 | Risk per trade: ₹5,000 max | Target: +30% | SL: -40%<br>
+    <span style="color:#ef4444;">⚠ For educational use only. Not SEBI registered advice. Always trade with your own judgment.</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
