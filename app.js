@@ -6,11 +6,14 @@
 
 const API = "";          // Same-origin (Flask serves this file)
 const POLL_INTERVAL = 15; // Fast 15-second live refresh!
+const RETRY_INTERVAL = 4; // Retry every 4s on cold-start/503
 
 // ─── State ────────────────────────────────────────────────────
 let countdown = POLL_INTERVAL;
 let countdownTimer = null;
 let pollTimer = null;
+let _dataLoaded = { NIFTY: false, BANKNIFTY: false }; // track if we got real data
+let _retryTimer = null;
 
 // ─── Theme Toggle ─────────────────────────────────────────────
 function toggleTheme() {
@@ -162,15 +165,35 @@ async function fetchAllData(force = false) {
   ]);
 
   fetchSignalHistory();
+
+  // If data still not loaded (cold start), schedule a quick retry
+  if (!_dataLoaded.NIFTY || !_dataLoaded.BANKNIFTY) {
+    clearTimeout(_retryTimer);
+    _retryTimer = setTimeout(() => fetchAllData(), RETRY_INTERVAL * 1000);
+  }
 }
 
 // ─── Fetch AI Signal for one index ───────────────────────────
 async function fetchSignal(sym, force = false) {
   const url = `${API}/api/signal/${sym}${force ? "?refresh=true" : ""}`;
+
+  // Show warm-up message if not yet loaded
+  if (!_dataLoaded[sym]) {
+    const prefix = sym === "NIFTY" ? "nifty" : "bankNifty";
+    const subEl = document.getElementById(`${prefix}StrikeText`);
+    if (subEl && subEl.textContent === "Fetching signal...")
+      subEl.textContent = "⏳ Server warming up... (~30s)";
+  }
+
   try {
     const r = await fetch(url);
+    if (r.status === 503) return; // Not ready yet, retry loop will handle it
     if (!r.ok) return;
     const json = await r.json();
+    if (json.status === "ok") {
+      _dataLoaded[sym] = true; // Mark as loaded
+      clearTimeout(_retryTimer);  // Cancel retry once data arrives
+    }
     renderSignal(sym, json);
     renderIndicators(sym, json.analysis_summary);
   } catch (e) {
