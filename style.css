@@ -218,7 +218,8 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
+  overflow-x: hidden;  /* prevent any horizontal scroll on body */
+  width: 100%;
 }
 
 /* ─── Top Marquee Ticker ─────────────────────────────────────── */
@@ -283,14 +284,14 @@ header {
 }
 
 .brand-logo {
-  width: 46px; height: 46px;
-  background: linear-gradient(135deg, #ff9933, #ff5252);
-  border-radius: 14px;
+  width: 42px; height: 42px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.5rem;
-  box-shadow: 0 0 18px rgba(255,153,51,0.4);
+  color: #fff;
+  box-shadow: 0 0 18px rgba(99,102,241,0.45);
   flex-shrink: 0;
 }
 
@@ -407,6 +408,8 @@ header {
   transition: border-color .3s;
   position: relative;
   overflow: hidden;
+  min-width: 0;   /* prevent grid/flex child overflow */
+  word-break: break-word;
 }
 .signal-box::before {
   content: '';
@@ -525,6 +528,7 @@ body.light .exec-label {
   font-family: var(--mono);
   font-size: 1.5rem;
   font-weight: 700;
+  word-break: break-all; /* prevent LTP overflowing on small screens */
 }
 .signal-change {
   font-family: var(--mono);
@@ -827,173 +831,151 @@ footer strong { color:var(--nse-saffron); }
     padding: 14px 16px;
     gap: 14px;
   }
-
-  .signal-card {
-    grid-template-columns: 1fr;
-    gap: 14px;
-  }
-
-  header {
-    padding: 10px 16px;
-    gap: 8px;
-  }
-
-  .header-right {
-    gap: 8px;
-  }
-
+  .signal-card { grid-template-columns: 1fr; gap: 14px; }
+  header { padding: 10px 16px; gap: 8px; }
+  .header-right { gap: 8px; }
   .brand-name { font-size: 1rem; }
   .brand-tagline { display: none; }
-
-  .refresh-bar {
-    padding: 5px 16px;
-    font-size: 0.7rem;
-  }
+  .refresh-bar { padding: 5px 16px; font-size: 0.7rem; }
 }
 
 /* ── Phone (≤ 640px) ──────────────────────────────────────────── */
 @media (max-width: 640px) {
-  /* Header: stack brand + buttons */
+
+  /* ── Header: 2-row layout ─────────────────────── */
   header {
-    padding: 10px 12px;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 8px;
+    padding: 8px 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
   }
 
+  /* Row 1: Brand fills full width */
   .brand {
     gap: 10px;
-    flex: 1;
-    min-width: 0;
+    width: 100%;
   }
 
   .brand-logo {
-    width: 36px;
-    height: 36px;
-    font-size: 1.1rem;
-    border-radius: 10px;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
     flex-shrink: 0;
   }
 
+  .brand-logo span { font-size: 0.9rem !important; }
+
   .brand-name {
-    font-size: 0.82rem;
-    letter-spacing: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 1rem;
+    letter-spacing: 0.5px;
   }
 
   .brand-tagline { display: none; }
 
+  /* Row 2: Controls spread across full width */
   .header-right {
     width: 100%;
     justify-content: space-between;
+    align-items: center;
     gap: 6px;
     flex-wrap: nowrap;
   }
 
-  /* Hide Gemini pill text on very small screens, keep dot only */
-  #geminiText { display: none; }
-  .status-pill { padding: 5px 8px; font-size: 0.68rem; }
+  /* Compact status pills — just dot + short label */
+  .status-pill {
+    padding: 4px 8px;
+    font-size: 0.65rem;
+    gap: 4px;
+    flex-shrink: 0;
+  }
 
+  /* Hide long Gemini text on mobile */
+  #geminiText { display: none; }
+
+  /* Theme toggle: icon only */
   #themeToggleBtn {
-    padding: 6px 10px;
-    font-size: 0.72rem;
+    padding: 5px 9px;
+    font-size: 0.7rem;
+    gap: 4px;
+    border-radius: 16px;
+    flex-shrink: 0;
   }
   #themeLabel { display: none; }
 
-  .btn { padding: 7px 11px; font-size: 0.75rem; }
-  .btn-primary { padding: 8px 12px; font-size: 0.78rem; }
+  /* Refresh button: compact */
+  #btnRefreshAll {
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
 
-  /* Refresh bar — single line scroll */
+  /* ── Refresh bar ────────────────────────── */
   .refresh-bar {
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
-    padding: 5px 12px;
-    font-size: 0.68rem;
+    gap: 1px;
+    padding: 4px 12px;
+    font-size: 0.65rem;
   }
 
-  /* Main grid */
+  /* ── Main grid ─────────────────────────── */
   .app-grid {
     padding: 10px 12px;
-    gap: 12px;
+    gap: 10px;
   }
 
-  /* Signal cards — full width stacked */
+  /* ── Signal cards ──────────────────────── */
   .signal-card {
     grid-template-columns: 1fr;
-    gap: 12px;
+    gap: 10px;
   }
 
   .signal-box {
-    padding: 16px 14px;
-    gap: 12px;
+    padding: 14px 12px;
+    gap: 10px;
   }
 
-  .signal-ltp {
-    font-size: 1.2rem;
-  }
+  .signal-ltp { font-size: 1.25rem; }
+  .signal-main-text { font-size: 1.25rem; }
+  .signal-emoji { font-size: 1.5rem; }
+  .signal-badge { padding: 12px 14px; gap: 10px; }
 
-  .signal-main-text {
-    font-size: 1.3rem;
-  }
-
-  .signal-emoji { font-size: 1.6rem; }
-
-  /* Trade details: 3 cols on phone */
+  /* ── Trade details: 3 cols ────────────────── */
   .trade-details {
     grid-template-columns: repeat(3, 1fr);
     gap: 6px;
   }
+  .trade-stat { padding: 6px 8px; }
+  .trade-stat-label { font-size: 0.58rem; }
+  .trade-stat-val { font-size: 0.8rem; }
 
-  .trade-stat {
-    padding: 6px 8px;
-  }
-
-  .trade-stat-label { font-size: 0.6rem; }
-  .trade-stat-val   { font-size: 0.82rem; }
-
-  /* Technical indicators: 2 cols on phone */
+  /* ── Technical indicators: 2 cols ───────────── */
   .indicators-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 6px;
   }
 
-  /* PCR gauge: stack vertically */
-  .pcr-gauge-row {
-    flex-direction: row;
-    gap: 10px;
-  }
-
+  /* ── PCR gauge ─────────────────────────── */
+  .pcr-gauge-row { gap: 10px; }
   .pcr-value { font-size: 1.5rem; }
 
-  /* Options chain: smaller font, horizontal scroll */
+  /* ── Options chain ─────────────────────── */
   .chain-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+  .chain-table { font-size: 0.65rem; min-width: 300px; }
+  .chain-table th, .chain-table td { padding: 4px 3px; }
 
-  .chain-table {
-    font-size: 0.68rem;
-    min-width: 320px;
-  }
-
-  .chain-table th,
-  .chain-table td {
-    padding: 5px 4px;
-  }
-
-  /* History list */
-  .history-list { max-height: 220px; }
-
+  /* ── History ───────────────────────────── */
+  .history-list { max-height: 200px; }
   .history-item {
     flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px 10px;
-    font-size: 0.72rem;
+    gap: 5px;
+    padding: 7px 10px;
+    font-size: 0.7rem;
   }
-
   .history-detail {
     white-space: normal;
     overflow: visible;
@@ -1002,59 +984,36 @@ footer strong { color:var(--nse-saffron); }
     flex: none;
   }
 
-  /* Execution card */
-  .exec-row {
-    flex-direction: column;
-    gap: 2px;
-    font-size: 0.74rem;
-  }
-
+  /* ── Execution card ────────────────────── */
+  .exec-row { flex-direction: column; gap: 1px; font-size: 0.72rem; }
   .exec-label { min-width: unset; }
 
-  /* Bias meter labels */
-  .bias-labels { font-size: 0.58rem; }
+  /* ── Panels ────────────────────────────── */
+  .panel { padding: 12px 12px; }
+  .panel-title { font-size: 0.8rem; margin-bottom: 10px; }
+  .bias-labels { font-size: 0.56rem; }
 
-  /* Panels */
-  .panel {
-    padding: 14px 12px;
-  }
-
-  .panel-title {
-    font-size: 0.82rem;
-    margin-bottom: 12px;
-  }
-
-  /* Gemini inspector banner — stack */
+  /* ── Gemini banner ─────────────────────── */
   .panel[style*="flex"] {
     flex-direction: column !important;
     align-items: flex-start !important;
-    padding: 16px 14px !important;
-    gap: 12px !important;
+    padding: 14px 12px !important;
+    gap: 10px !important;
   }
 
-  /* Disclaimer */
-  .disclaimer {
-    font-size: 0.7rem;
-    padding: 8px 12px;
-  }
+  /* ── Disclaimer ───────────────────────── */
+  .disclaimer { font-size: 0.68rem; padding: 8px 10px; }
 
-  /* Footer */
-  .app-footer {
-    padding: 14px 12px;
-    font-size: 0.7rem;
-  }
-
-  footer {
-    padding: 10px 12px;
-    font-size: 0.68rem;
-  }
+  /* ── Footer ────────────────────────────── */
+  .app-footer, footer { padding: 12px 12px; font-size: 0.68rem; }
 }
 
 /* ── Very small phones (≤ 380px) ──────────────────────────────── */
 @media (max-width: 380px) {
-  .brand-name { font-size: 0.72rem; }
-  .signal-main-text { font-size: 1.1rem; }
+  .brand-name { font-size: 0.88rem; }
+  .signal-main-text { font-size: 1.05rem; }
   .signal-ltp { font-size: 1rem; }
   .trade-details { grid-template-columns: repeat(2, 1fr); }
   .pcr-value { font-size: 1.2rem; }
+  #btnRefreshAll { font-size: 0.7rem; padding: 5px 9px; }
 }
