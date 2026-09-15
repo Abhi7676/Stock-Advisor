@@ -4,7 +4,6 @@ flask-cors>=4.0.0
 pandas>=2.0.0
 numpy>=1.24.0
 requests>=2.31.0
-pandas-ta==0.3.14b
 yfinance>=0.2.36
 gunicorn>=21.2.0
 python-dotenv>=1.0.0
