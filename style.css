@@ -187,6 +187,10 @@ body.light #themeToggleBtn:hover {
   font-size: 0.78rem;
   color: var(--text-3);
   line-height: 1.7;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  word-break: break-word;
 }
 .app-footer .footer-dev {
   font-weight: 700;
@@ -205,7 +209,12 @@ body.light .app-footer {
 
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 
-html { scroll-behavior: smooth; }
+html {
+  scroll-behavior: smooth;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
 
 body {
   font-family: var(--font);
@@ -218,13 +227,17 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;  /* prevent any horizontal scroll on body */
+  overflow-x: hidden;
   width: 100%;
+  max-width: 100%;
+  position: relative;
 }
 
 /* ─── Top Marquee Ticker ─────────────────────────────────────── */
 .ticker-wrap {
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   background: #060911;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -275,6 +288,9 @@ header {
   position: sticky;
   top: 0;
   z-index: 100;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .brand {
@@ -372,27 +388,38 @@ header {
   justify-content: space-between;
   font-size: 0.75rem;
   color: var(--text-3);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .refresh-bar .countdown-text { color:var(--cyan); font-family:var(--mono); font-weight:600; }
 
 /* ─── Main Layout ────────────────────────────────────────────── */
 .app-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: auto auto auto;
   gap: 20px;
   padding: 20px 24px;
   flex: 1;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
-@media (max-width: 1050px) { .app-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1050px) { .app-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* ─── Signal Card (main hero element) ───────────────────────── */
 .signal-card {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .signal-box {
@@ -621,6 +648,10 @@ body.light .exec-label {
   border-radius: var(--radius);
   padding: 20px;
   box-shadow: var(--shadow);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .panel-title {
@@ -682,7 +713,13 @@ body.light .exec-label {
 .ind-sig.ambe { background:rgba(245,158,11,.15); color:var(--wait); }
 
 /* ─── Options Chain Table ────────────────────────────────────── */
-.chain-wrapper { overflow-x: auto; }
+.chain-wrapper {
+  overflow-x: auto;
+  width: 100%;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+  box-sizing: border-box;
+}
 .chain-table {
   width: 100%;
   border-collapse: collapse;
@@ -731,6 +768,8 @@ body.light .exec-label {
   align-items: center;
   gap: 16px;
   margin-top: 12px;
+  min-width: 0;
+  max-width: 100%;
 }
 .pcr-value {
   font-family: var(--mono);
@@ -738,7 +777,7 @@ body.light .exec-label {
   font-weight: 800;
 }
 .pcr-label { font-size:.7rem; color:var(--text-3); margin-top:2px; }
-.pcr-bar-wrap { flex:1; }
+.pcr-bar-wrap { flex:1; min-width: 0; }
 .pcr-bar {
   height: 10px;
   background: rgba(255,255,255,0.08);
@@ -779,6 +818,72 @@ body.light .exec-label {
 .history-time { color:var(--text-3); font-family:var(--mono); white-space:nowrap; }
 .history-detail { color:var(--text-2); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
+/* ─── Gemini Inspector Banner ────────────────────────────────── */
+.gemini-inspector-banner {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(168,85,247,0.08));
+  border: 1px solid rgba(99,102,241,0.3);
+  padding: 20px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-radius: var(--radius);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.gemini-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  flex: 1;
+}
+.gemini-banner-icon {
+  font-size: 2rem;
+  background: rgba(99,102,241,0.2);
+  width: 50px;
+  height: 50px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(99,102,241,0.4);
+  flex-shrink: 0;
+}
+.gemini-banner-heading {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+}
+.gemini-banner-sub {
+  font-size: 0.8rem;
+  color: var(--text-2);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.gemini-banner-action .btn {
+  text-decoration: none;
+  padding: 12px 22px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 20px rgba(99,102,241,0.35);
+  cursor: pointer;
+  white-space: nowrap;
+}
+body.light .gemini-inspector-banner {
+  background: linear-gradient(135deg, rgba(0,179,134,0.08), rgba(99,102,241,0.06));
+  border-color: rgba(0,179,134,0.3);
+}
+body.light .gemini-banner-heading { color: #0d0d0d; }
+body.light .gemini-banner-sub { color: #4b5563; }
+
 /* ─── Footer ─────────────────────────────────────────────────── */
 footer {
   text-align:center;
@@ -787,6 +892,9 @@ footer {
   color:var(--text-3);
   border-top:1px solid var(--border);
   background:rgba(7,11,18,0.8);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 footer strong { color:var(--nse-saffron); }
 
@@ -827,16 +935,37 @@ footer strong { color:var(--nse-saffron); }
 /* ── Tablet (≤ 900px) ─────────────────────────────────────────── */
 @media (max-width: 900px) {
   .app-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     padding: 14px 16px;
     gap: 14px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
-  .signal-card { grid-template-columns: 1fr; gap: 14px; }
-  header { padding: 10px 16px; gap: 8px; }
+  .signal-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  header {
+    padding: 10px 16px;
+    gap: 8px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
   .header-right { gap: 8px; }
   .brand-name { font-size: 1rem; }
   .brand-tagline { display: none; }
-  .refresh-bar { padding: 5px 16px; font-size: 0.7rem; }
+  .refresh-bar {
+    padding: 5px 16px;
+    font-size: 0.7rem;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
 }
 
 /* ── Phone (≤ 640px) ──────────────────────────────────────────── */
@@ -848,6 +977,9 @@ footer strong { color:var(--nse-saffron); }
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   /* Row 1: Brand fills full width */
@@ -868,6 +1000,7 @@ footer strong { color:var(--nse-saffron); }
   .brand-name {
     font-size: 1rem;
     letter-spacing: 0.5px;
+    white-space: nowrap;
   }
 
   .brand-tagline { display: none; }
@@ -917,23 +1050,37 @@ footer strong { color:var(--nse-saffron); }
     gap: 1px;
     padding: 4px 12px;
     font-size: 0.65rem;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   /* ── Main grid ─────────────────────────── */
   .app-grid {
     padding: 10px 12px;
     gap: 10px;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
   }
 
   /* ── Signal cards ──────────────────────── */
   .signal-card {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 10px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .signal-box {
     padding: 14px 12px;
     gap: 10px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .signal-ltp { font-size: 1.25rem; }
@@ -943,29 +1090,51 @@ footer strong { color:var(--nse-saffron); }
 
   /* ── Trade details: 3 cols ────────────────── */
   .trade-details {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
+    width: 100%;
+    box-sizing: border-box;
   }
-  .trade-stat { padding: 6px 8px; }
-  .trade-stat-label { font-size: 0.58rem; }
-  .trade-stat-val { font-size: 0.8rem; }
+  .trade-stat {
+    padding: 6px 4px;
+    min-width: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .trade-stat-label {
+    font-size: 0.56rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .trade-stat-val {
+    font-size: 0.78rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   /* ── Technical indicators: 2 cols ───────────── */
   .indicators-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 6px;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   /* ── PCR gauge ─────────────────────────── */
-  .pcr-gauge-row { gap: 10px; }
+  .pcr-gauge-row { gap: 10px; width: 100%; box-sizing: border-box; }
   .pcr-value { font-size: 1.5rem; }
 
   /* ── Options chain ─────────────────────── */
   .chain-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
-  .chain-table { font-size: 0.65rem; min-width: 300px; }
+  .chain-table { font-size: 0.65rem; min-width: 480px; width: 100%; }
   .chain-table th, .chain-table td { padding: 4px 3px; }
 
   /* ── History ───────────────────────────── */
@@ -989,23 +1158,70 @@ footer strong { color:var(--nse-saffron); }
   .exec-label { min-width: unset; }
 
   /* ── Panels ────────────────────────────── */
-  .panel { padding: 12px 12px; }
+  .panel {
+    padding: 12px 12px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
   .panel-title { font-size: 0.8rem; margin-bottom: 10px; }
   .bias-labels { font-size: 0.56rem; }
 
-  /* ── Gemini banner ─────────────────────── */
-  .panel[style*="flex"] {
+  /* ── Gemini Inspector banner ───────────── */
+  .gemini-inspector-banner {
     flex-direction: column !important;
-    align-items: flex-start !important;
+    align-items: stretch !important;
     padding: 14px 12px !important;
-    gap: 10px !important;
+    gap: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .gemini-banner-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+  }
+  .gemini-banner-icon {
+    font-size: 1.5rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    flex-shrink: 0;
+  }
+  .gemini-banner-heading {
+    font-size: 0.92rem;
+  }
+  .gemini-banner-sub {
+    font-size: 0.72rem;
+  }
+  .gemini-banner-action .btn {
+    width: 100%;
+    justify-content: center;
+    padding: 10px 16px;
+    font-size: 0.82rem;
+    box-sizing: border-box;
   }
 
   /* ── Disclaimer ───────────────────────── */
-  .disclaimer { font-size: 0.68rem; padding: 8px 10px; }
+  .disclaimer {
+    font-size: 0.68rem;
+    padding: 8px 10px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
 
   /* ── Footer ────────────────────────────── */
-  .app-footer, footer { padding: 12px 12px; font-size: 0.68rem; }
+  .app-footer, footer {
+    padding: 14px 12px;
+    font-size: 0.68rem;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
 }
 
 /* ── Very small phones (≤ 380px) ──────────────────────────────── */

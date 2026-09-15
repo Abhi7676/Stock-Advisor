@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TradeSignals — Nifty &amp; BankNifty F&amp;O AI Advisor | India</title>
   <meta name="description" content="AI-powered Nifty 50 &amp; Bank Nifty F&amp;O options CALL/PUT signal advisor using live NSE data and Google Gemini. Free, real-time.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -418,22 +418,16 @@
     <!-- ════════════════════════════════════════════
          Gemini API Key Inspector & Monitoring Banner
     ════════════════════════════════════════════ -->
-    <div class="panel" style="grid-column: 1 / -1; background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(168,85,247,0.08)); border: 1px solid rgba(99,102,241,0.3); padding: 22px 28px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; border-radius: var(--radius);">
-      <div style="display: flex; align-items: center; gap: 16px;">
-        <div style="font-size: 2.2rem; background: rgba(99,102,241,0.2); width: 54px; height: 54px; border-radius: 14px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(99,102,241,0.4);">
-          ⚡
-        </div>
-        <div>
-          <div style="font-size: 1.1rem; font-weight: 800; color: var(--text-1); letter-spacing: -0.01em;">
-            Gemini AI API Calls &amp; Reasoning Inspector
-          </div>
-          <div style="font-size: 0.82rem; color: var(--text-2); margin-top: 3px;">
-            Monitor live questions, input prompts sent to Gemini, and exact answers received from your API key in real-time.
-          </div>
+    <div class="panel gemini-inspector-banner">
+      <div class="gemini-banner-left">
+        <div class="gemini-banner-icon">⚡</div>
+        <div class="gemini-banner-text">
+          <div class="gemini-banner-heading">Gemini AI API Calls &amp; Reasoning Inspector</div>
+          <div class="gemini-banner-sub">Monitor live questions, input prompts sent to Gemini, and exact answers received from your API key in real-time.</div>
         </div>
       </div>
-      <div>
-        <a href="gemini_monitor.html" id="btnCheckGeminiCalls" class="btn btn-primary" target="_blank" style="text-decoration: none; padding: 12px 24px; font-size: 0.92rem; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 4px 20px rgba(99,102,241,0.35); cursor: pointer;">
+      <div class="gemini-banner-action">
+        <a href="gemini_monitor.html" id="btnCheckGeminiCalls" class="btn btn-primary" target="_blank">
           <span>🔍</span> Check gemini api key calls
         </a>
       </div>
