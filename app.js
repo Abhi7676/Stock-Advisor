@@ -12,8 +12,34 @@ let countdown = POLL_INTERVAL;
 let countdownTimer = null;
 let pollTimer = null;
 
+// ─── Theme Toggle ─────────────────────────────────────────────
+function toggleTheme() {
+  const isLight = document.body.classList.toggle("light");
+  localStorage.setItem("fao_theme", isLight ? "light" : "dark");
+  _applyThemeUI(isLight);
+}
+
+function _applyThemeUI(isLight) {
+  const icon  = document.getElementById("themeIcon");
+  const label = document.getElementById("themeLabel");
+  if (isLight) {
+    if (icon)  icon.textContent  = "☀️";
+    if (label) label.textContent = "Dark Mode";
+  } else {
+    if (icon)  icon.textContent  = "🌙";
+    if (label) label.textContent = "Light Mode";
+  }
+}
+
 // ─── Init ──────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  // Restore saved theme preference
+  const savedTheme = localStorage.getItem("fao_theme");
+  if (savedTheme === "light") {
+    document.body.classList.add("light");
+    _applyThemeUI(true);
+  }
+
   checkMarketStatus();
   checkGeminiStatus();
   fetchMarketTicker();
@@ -412,49 +438,65 @@ async function fetchSignalHistory() {
 function renderHistory(rows) {
   const container = document.getElementById("historyList");
 
-  // Filter out WAIT signals so history ONLY shows executed BUY CALL / BUY PUT trades
+  // Backend already dedupes to 1 per hour and filters BUY signals only
   const trades = (rows || []).filter(r => r.signal === "BUY_CALL" || r.signal === "BUY_PUT");
 
   if (!trades.length) {
     container.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-3);font-size:0.82rem">
       📊 <strong>No Trades Executed Yet</strong><br>
-      <span style="font-size:0.75rem;color:var(--text-3)">Signal History logs active <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades, tracking live option prices and 30-minute PnL performance (+% profit / loss).</span>
+      <span style="font-size:0.75rem;color:var(--text-3)">Signal History shows <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades — one per hour — with 1hr hold results (PROFIT / LOSS).</span>
     </div>`;
     return;
   }
 
   container.innerHTML = trades.map(row => {
-    const sig = row.signal || "BUY_CALL";
-    const cls = sig === "BUY_CALL" ? "call" : "put";
-    const label = sig === "BUY_CALL" ? "BUY CALL" : "BUY PUT";
-    const time = row.created_at ? row.created_at.split("T")[1]?.slice(0, 5) || row.created_at : "—";
+    const sig   = row.signal || "BUY_CALL";
+    const cls   = sig === "BUY_CALL" ? "call" : "put";
+    const label = sig === "BUY_CALL" ? "📈 BUY CALL" : "📉 BUY PUT";
 
-    const entryP = row.entry_premium ? row.entry_premium.toFixed(2) : "0.00";
-    const exitP  = row.exit_premium ? row.exit_premium.toFixed(2) : entryP;
-    const pnlPct = row.pnl_pct != null ? row.pnl_pct : 0.0;
-    const pnlAmt = row.pnl_amount != null ? row.pnl_amount : 0.0;
-    const isProfit = pnlPct >= 0;
+    // Date + time of signal entry
+    const entryDt = row.created_at ? row.created_at.replace("T", " ").slice(0, 16) : "—";
 
-    const pnlClass = isProfit ? "pos" : "neg";
-    const pnlPill = `<span class="exec-val ${pnlClass}" style="background:${isProfit ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'};padding:2px 8px;border-radius:4px;font-size:0.78rem">
-      ${isProfit ? '+' : ''}${pnlPct.toFixed(1)}% (${isProfit ? '+' : ''}₹${pnlAmt.toFixed(0)})
-    </span>`;
+    const entryP  = row.entry_premium != null ? (+row.entry_premium).toFixed(2) : "—";
+    const exitP   = row.exit_premium  != null ? (+row.exit_premium).toFixed(2)  : entryP;
+    const pnlPct  = row.pnl_pct  != null ? +row.pnl_pct  : 0;
+    const pnlAmt  = row.pnl_amount != null ? +row.pnl_amount : 0;
+
+    // Outcome badge from backend
+    const outcome      = row.outcome      || (row.status?.includes("ACTIVE") ? "⏳ ACTIVE" : `${pnlPct >= 0 ? "✅" : "❌"} ${pnlPct >= 0 ? "PROFIT" : "LOSS"} ${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%`);
+    const outcomeClass = row.outcome_class || (pnlPct > 0 ? "profit" : pnlPct < 0 ? "loss" : "active");
+
+    const outcomeColors = {
+      profit:  { bg: "rgba(16,185,129,0.15)", border: "rgba(16,185,129,0.4)", text: "#10b981" },
+      loss:    { bg: "rgba(239,68,68,0.15)",  border: "rgba(239,68,68,0.4)",  text: "#ef4444" },
+      active:  { bg: "rgba(56,189,248,0.10)", border: "rgba(56,189,248,0.3)", text: "#38bdf8" },
+      neutral: { bg: "rgba(148,163,184,0.12)",border: "rgba(148,163,184,0.3)",text: "#94a3b8" },
+    };
+    const oc = outcomeColors[outcomeClass] || outcomeColors.neutral;
 
     const statusStr = row.status || "ACTIVE";
-    const statusColor = statusStr.includes("PROFIT") ? "#10b981" : statusStr.includes("STOP") ? "#ef4444" : "#38bdf8";
 
-    return `<div class="history-item" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px">
-      <div style="display:flex;align-items:center;gap:10px">
-        <span class="history-badge ${cls}">${label}</span>
-        <div>
-          <div style="font-weight:700;font-size:.82rem;color:var(--text-1)">${row.symbol} ${row.strike} ${row.option_type || ""}</div>
-          <div style="font-size:.73rem;color:var(--text-3)">Entry: ₹${entryP} ➔ Current: ₹${exitP}</div>
+    return `<div class="history-item" style="display:flex;align-items:flex-start;gap:12px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.05)">
+      <!-- Signal badge -->
+      <span class="history-badge ${cls}" style="flex-shrink:0;margin-top:2px">${label}</span>
+
+      <!-- Trade details -->
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:.85rem;color:var(--text-1)">${row.symbol} &nbsp;${row.strike} ${row.option_type || ""}</div>
+        <div style="font-size:.73rem;color:var(--text-3);margin-top:2px">
+          📅 ${entryDt} &nbsp;|&nbsp; Entry ₹${entryP} &nbsp;→&nbsp; Exit ₹${exitP}
+          ${pnlAmt !== 0 ? `&nbsp;|&nbsp; <span style="color:${oc.text};font-weight:700">${pnlAmt >= 0 ? "+" : ""}₹${pnlAmt.toFixed(0)} PnL</span>` : ""}
         </div>
+        <div style="font-size:0.71rem;color:var(--text-3);margin-top:2px;opacity:0.7">${statusStr}</div>
       </div>
-      <div style="display:flex;align-items:center;gap:12px">
-        ${pnlPill}
-        <span style="font-size:0.72rem;font-weight:700;color:${statusColor};background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">${statusStr}</span>
-        <span class="history-time">${time}</span>
+
+      <!-- 1-hour hold outcome pill -->
+      <div style="flex-shrink:0;text-align:right">
+        <div style="background:${oc.bg};border:1px solid ${oc.border};color:${oc.text};
+                    padding:5px 12px;border-radius:8px;font-size:0.78rem;font-weight:700;white-space:nowrap">
+          ${outcome}
+        </div>
+        <div style="font-size:0.67rem;color:var(--text-3);margin-top:3px;opacity:0.7">1hr hold result</div>
       </div>
     </div>`;
   }).join("");

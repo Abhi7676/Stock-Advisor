@@ -58,11 +58,11 @@ class NSESession:
             logger.warning(f"NSE session init failed: {e}")
             self._initialized = False
 
-    def get(self, url: str, timeout: int = 5) -> dict | None:
+    def get(self, url: str, params: dict | None = None, timeout: int = 10) -> dict | None:
         self._ensure_init()
         for attempt in range(2):
             try:
-                resp = self._session.get(url, timeout=timeout)
+                resp = self._session.get(url, params=params, timeout=timeout)
                 if resp.status_code == 200:
                     try:
                         return resp.json()
@@ -81,6 +81,16 @@ class NSESession:
 
 
 _nse = NSESession()
+
+
+# ─── Contract Info & Options Chain (v3) ───────────────────────────────────────
+
+def get_contract_info(symbol: str) -> dict | None:
+    """
+    Fetches option chain contract metadata including expiry dates for NIFTY / BANKNIFTY.
+    """
+    params = {"symbol": symbol.upper()}
+    return _nse.get(config.NSE_CONTRACT_INFO_URL, params=params, timeout=10)
 
 
 # ─── Index Live Quote ──────────────────────────────────────────────────────────
@@ -226,7 +236,8 @@ def _synthetic_index(symbol: str) -> dict:
 
 def get_options_chain(symbol: str) -> dict:
     """
-    Fetches full options chain from NSE. Returns a dict with:
+    Fetches full options chain from NSE using contract info and v3 endpoints.
+    Returns a dict with:
       - underlying_value  : live spot price
       - expiry_dates      : list of available expiry dates
       - nearest_expiry    : nearest expiry
@@ -236,38 +247,67 @@ def get_options_chain(symbol: str) -> dict:
       - max_pain          : max pain strike
     Falls back to synthetic data if NSE API is unreachable.
     """
-    url = config.INDICES[symbol]["option_chain_url"]
-    raw = _nse.get(url, timeout=15)
+    contract_info = get_contract_info(symbol)
+    expiry_dates = []
+    if contract_info:
+        if isinstance(contract_info, dict):
+            expiry_dates = (
+                contract_info.get("expiryDates") or
+                contract_info.get("records", {}).get("expiryDates") or
+                []
+            )
+        elif isinstance(contract_info, list):
+            expiry_dates = contract_info
 
-    if raw and "records" in raw:
-        return _parse_nse_chain(raw, symbol)
+    nearest_expiry = expiry_dates[0] if expiry_dates else None
+
+    if nearest_expiry:
+        params = {
+            "type": "Indices",
+            "symbol": symbol,
+            "expiry": nearest_expiry,
+        }
+        raw = _nse.get(config.NSE_OPTION_CHAIN_V3_URL, params=params, timeout=15)
+        if raw and ("records" in raw or "data" in raw):
+            parsed = _parse_nse_chain(raw, symbol, nearest_expiry, expiry_dates)
+            if parsed and parsed.get("chain"):
+                return parsed
 
     logger.info(f"Using calibrated live option chain pricing for {symbol}.")
     return _synthetic_chain(symbol)
 
 
-def _parse_nse_chain(raw: dict, symbol: str) -> dict:
-    """Parses raw NSE options chain JSON into a clean, structured dict."""
-    records = raw.get("records", {})
-    filtered = raw.get("filtered", {})
-
-    underlying_value = float(records.get("underlyingValue", 0))
-    expiry_dates = records.get("expiryDates", [])
-    nearest_expiry = expiry_dates[0] if expiry_dates else "N/A"
+def _parse_nse_chain(raw: dict, symbol: str, nearest_expiry: str = None, expiry_dates: list = None) -> dict | None:
+    """Parses raw NSE v3 options chain JSON into a clean, structured dict."""
+    records = raw.get("records", raw)
+    underlying_value = float(records.get("underlyingValue", 0) or raw.get("underlyingValue", 0) or 0)
+    all_expiry_dates = expiry_dates or records.get("expiryDates", [])
+    if not nearest_expiry and all_expiry_dates:
+        nearest_expiry = all_expiry_dates[0]
 
     data = records.get("data", [])
+    if not data:
+        return None
 
-    # Round ATM to nearest 50 (Nifty) or 100 (BankNifty)
+    # Step: Round ATM to nearest 50 (Nifty) or 100 (BankNifty)
     step = 50 if symbol == "NIFTY" else 100
-    atm_strike = round(underlying_value / step) * step
+    if underlying_value <= 0:
+        quote = get_index_quote(symbol)
+        underlying_value = float(quote.get("ltp", 0) or 0)
+    atm_strike = round(underlying_value / step) * step if underlying_value > 0 else 0
 
     chain_rows = []
     total_call_oi = 0
     total_put_oi = 0
 
     for row in data:
-        if row.get("expiryDate") != nearest_expiry:
-            continue
+        row_expiry = row.get("expiryDates") or row.get("expiryDate")
+        if row_expiry:
+            if isinstance(row_expiry, str) and nearest_expiry and row_expiry != nearest_expiry:
+                continue
+            elif isinstance(row_expiry, list) and nearest_expiry and nearest_expiry not in row_expiry:
+                continue
+
         strike = row.get("strikePrice", 0)
         ce = row.get("CE", {}) or {}
         pe = row.get("PE", {}) or {}
@@ -292,8 +332,11 @@ def _parse_nse_chain(raw: dict, symbol: str) -> dict:
             "put_ltp": float(pe.get("lastPrice", 0) or 0),
             "put_iv": float(pe.get("impliedVolatility", 0) or 0),
             "put_volume": int(pe.get("totalTradedVolume", 0) or 0),
-            "is_atm": abs(strike - atm_strike) < (step * 0.5),
+            "is_atm": abs(strike - atm_strike) < (step * 0.5) if atm_strike else False,
         })
+
+    if not chain_rows:
+        return None
 
     # Sort by strike
     chain_rows.sort(key=lambda x: x["strike"])
@@ -312,19 +355,22 @@ def _parse_nse_chain(raw: dict, symbol: str) -> dict:
     )
     focused = chain_rows[max(0, atm_idx - n): atm_idx + n + 1]
 
+    from zoneinfo import ZoneInfo
+    ist_timestamp = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S IST")
+
     return {
         "symbol": symbol,
         "underlying_value": underlying_value,
         "atm_strike": atm_strike,
-        "nearest_expiry": nearest_expiry,
-        "expiry_dates": expiry_dates[:4],
+        "nearest_expiry": nearest_expiry or "N/A",
+        "expiry_dates": all_expiry_dates[:4] if all_expiry_dates else ([nearest_expiry] if nearest_expiry else []),
         "chain": focused,
         "total_call_oi": total_call_oi,
         "total_put_oi": total_put_oi,
         "pcr": pcr,
         "max_pain": max_pain,
         "data_source": "nse_live",
-        "timestamp": datetime.now().strftime("%H:%M:%S IST"),
+        "timestamp": ist_timestamp,
     }
 
 
@@ -416,6 +462,9 @@ def _synthetic_chain(symbol: str) -> dict:
     pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi else 1.0
     max_pain = _calculate_max_pain(chain_rows)
 
+    from zoneinfo import ZoneInfo
+    ist_timestamp = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S IST")
+
     return {
         "symbol": symbol,
         "underlying_value": spot,
@@ -427,23 +476,23 @@ def _synthetic_chain(symbol: str) -> dict:
         "total_put_oi": total_put_oi,
         "pcr": pcr,
         "max_pain": max_pain,
-        "data_source": "nse_live_bs",
-        "timestamp": datetime.now().strftime("%H:%M:%S IST"),
+        "data_source": "synthetic_black_scholes",
+        "timestamp": ist_timestamp,
     }
 
 
 def _get_expiry_info(symbol: str) -> tuple:
-    """Calculates active weekly contract expiry date matching Groww terminal (08-Sep for Nifty, 09-Sep for BankNifty)."""
-    today = date.today()
-    if symbol == "NIFTY":
-        # Target 08-SEP-2026 (6 days away on Wednesday 02-Sep)
-        days_ahead = 6
-        expiry_date = today + timedelta(days=days_ahead)
-        return "08-SEP-2026", days_ahead
-    else:
-        # BankNifty target active 29-SEP-2026 Monthly contract on Groww (27 days away)
-        days_ahead = 27
-        return "29-SEP-2026", days_ahead
+    """Calculates active contract expiry date dynamically for synthetic fallback."""
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    # Weekly options expiry (Thursdays=3)
+    target_weekday = 3
+    days_ahead = (target_weekday - today.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    expiry_date = today + timedelta(days=days_ahead)
+    expiry_str = expiry_date.strftime("%d-%b-%Y")
+    return expiry_str, days_ahead
 
 
 # ─── Historical Candles for Technical Analysis ─────────────────────────────────

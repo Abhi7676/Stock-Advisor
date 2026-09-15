@@ -20,11 +20,34 @@ logger = logging.getLogger(__name__)
 _last_error = None
 _last_error_time = 0.0
 
+# ─── Gemini Call Inspector / Log Storage ─────────────────────
+import threading
+_call_logs = []
+_call_logs_lock = threading.Lock()
+_call_counter = 0
+
+def _next_log_id() -> int:
+    global _call_counter
+    with _call_logs_lock:
+        _call_counter += 1
+        return _call_counter
+
+def _log_call(entry: dict):
+    with _call_logs_lock:
+        _call_logs.insert(0, entry)
+        if len(_call_logs) > 200:
+            _call_logs.pop()
+
+def get_gemini_call_logs(limit: int = 50) -> list:
+    with _call_logs_lock:
+        return list(_call_logs[:limit])
+
 
 def _is_market_open() -> bool:
     """Returns True if current IST time is within NSE market hours (9:15–15:30) on a weekday."""
     from datetime import datetime
-    now = datetime.now()
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
     day = now.weekday()  # 0=Mon, 6=Sun
     if day >= 5:  # Weekend
         return False
@@ -179,130 +202,320 @@ Respond ONLY with this JSON (no markdown, no extra text):
   "strike": <recommended strike as integer>,
   "option_type": "CE" or "PE" or "NONE",
   "entry_premium": <entry premium in rupees>,
-  "target_premium": <target premium for profit>,
+  "target_premium": <target premium for 15%+ profit>,
   "stop_loss_premium": <stop loss premium level>,
   "estimated_cost_inr": <total cost for 1 lot>,
-  "reasoning": "WHY BUY CALL (or PUT / WAIT):\n• PCR: <exact PCR & interpretation>\n• OI Walls: <Support and Resistance walls>\n• Technicals: <RSI, MACD, Supertrend signals>\n• Risk/Reward: <Target, SL, and Capital Protection>",
+  "holding_minutes": <integer: recommended minutes to hold before booking profit, e.g. 20 or 45>,
+  "reasoning": "WHY BUY CALL (or PUT / WAIT):\n• PCR: <exact PCR & interpretation>\n• OI Walls: <Support and Resistance walls>\n• Technicals: <RSI, MACD, Supertrend signals>\n• Risk/Reward: <Target +15%, SL -8%, Capital Protection>",
   "key_risk": "<1 sentence about the main risk>",
   "market_bias": "BULLISH" or "BEARISH" or "NEUTRAL",
-  "trade_tip": "<1 practical tip for Groww F&O>"
+  "trade_tip": "<1 practical tip for Groww F&O — include exact time to exit>"
 }}"""
 
 
 _signal_cache = {}
+_cooldown_until = 0.0
+CACHE_TTL = 120  # 2 minutes cache for responsive signal updates
+
+# Per-cache-key locks to prevent concurrent threads from making duplicate Gemini API calls.
+# Only the first thread to acquire a lock calls Gemini; the rest wait and hit the warm cache.
+_gemini_call_locks: dict = {}
+_gemini_locks_meta = threading.Lock()
+
+def _get_call_lock(key: str) -> threading.Lock:
+    """Returns a reusable lock for a given cache_key, creating it if needed."""
+    with _gemini_locks_meta:
+        if key not in _gemini_call_locks:
+            _gemini_call_locks[key] = threading.Lock()
+        return _gemini_call_locks[key]
 
 
 def get_signal(analysis: dict) -> dict:
     """
-    Generates CALL/PUT signal using Google Gemini API.
-    Falls back to rule-based signal if API unavailable or quota exceeded.
-    Caches LLM result for 3 minutes to stay within rate limits.
-    Forces WAIT when market is closed or outside trading windows.
+    Two-Stage Smart Signal Engine (Max API Quota Preservation):
+      Stage 1: Fast Rule-Based Pre-Filter.
+               Checks PCR, RSI, MACD, Supertrend, OI walls, and intraday trading windows.
+               If the market is choppy, sideways, or outside trading windows (WAIT),
+               returns the rule-based result immediately — SAVING 90%+ of API calls!
+      Stage 2: AI Validation & Trade Advisory (Gemini API).
+               When a confirmed setup PASSES (BUY_CALL or BUY_PUT candidate), queries
+               Google Gemini API for expert trade validation, reasoning, risk tips, and confidence.
     """
+    global _cooldown_until, _last_error, _last_error_time
     symbol = analysis["symbol"]
     now = time.time()
 
     # ── Gate 0: Market Hours Check ────────────────────────
-    # Never return BUY signals when market is closed
     if not _is_market_open():
         return _market_closed_signal(analysis)
 
-    if symbol in _signal_cache and (now - _signal_cache[symbol]["time"]) < 180:
-        cached_sig = _signal_cache[symbol]["signal"].copy()
-        # Update live spot and ATM
-        cached_sig["ltp"] = analysis.get("ltp", cached_sig.get("ltp"))
-        cached_sig["atm_strike"] = analysis.get("atm_strike", cached_sig.get("atm_strike"))
-        # Override cached BUY to WAIT if now outside trading window
+    # ── Stage 1: Fast Rule-Based Filter ───────────────────
+    rule_sig = _rule_based_signal(analysis)
+
+    # If the setup is WAIT (choppy, sideways, low momentum, bad window), do NOT call Gemini
+    if rule_sig.get("signal") == "WAIT":
+        return rule_sig
+
+    # ── Stage 2: Confirmed Trade Candidate -> Gemini AI ───
+    # Check Cache (2 minutes) for the active trade setup
+    setup_type = rule_sig.get("signal", "NONE")
+    cache_key = f"{symbol}_{setup_type}"
+    if cache_key in _signal_cache and (now - _signal_cache[cache_key]["time"]) < CACHE_TTL:
+        cached_sig = _signal_cache[cache_key]["signal"].copy()
         window_ok, window_reason = _is_good_trading_window()
         if not window_ok and cached_sig.get("signal") in ("BUY_CALL", "BUY_PUT"):
             cached_sig["signal"] = "WAIT"
             cached_sig["reasoning"] = f"Signal downgraded to WAIT: {window_reason}"
             cached_sig["trading_window"] = window_reason
-        return cached_sig
+        return _enrich_signal(cached_sig, analysis)
+
+    # If in rate-limit cooldown, return confirmed rule signal
+    if now < _cooldown_until:
+        return rule_sig
+
+    key = _get_api_key()
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+
+    if not key:
+        logger.info("No Gemini API key — using confirmed rule-based trade signal.")
+        return rule_sig
+
+    # ── Deduplication Lock ─────────────────────────────────
+    # Acquire a per-(symbol+direction) lock before calling Gemini.
+    # If another thread is already in flight for this exact setup,
+    # we WAIT for it to finish, then return the freshly cached result.
+    call_lock = _get_call_lock(cache_key)
+    if not call_lock.acquire(blocking=True, timeout=35):
+        # Lock timed out — return rule signal safely
+        return rule_sig
+
+    try:
+        # Re-check cache: another thread may have populated it while we waited
+        if cache_key in _signal_cache and (time.time() - _signal_cache[cache_key]["time"]) < CACHE_TTL:
+            logger.info(f"Cache hit after lock wait for {cache_key} — skipping Gemini call.")
+            return _enrich_signal(_signal_cache[cache_key]["signal"].copy(), analysis)
+
+        prompt = _build_prompt(analysis)
+        candidate_models = [config.GEMINI_MODEL] + [
+            m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-3.6-flash"])
+            if m != config.GEMINI_MODEL
+        ]
+
+        # Try models in order (primary -> fallbacks)
+        last_err = None
+        for model_name in candidate_models:
+            # 1. Try new google.genai SDK
+            try:
+                from google import genai as gai
+                client = gai.Client(api_key=key)
+                start = time.time()
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=gai.types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=1024,
+                        response_mime_type="application/json",
+                        system_instruction=(
+                            "You are an expert Indian F&O options trader. "
+                            "Always respond with valid JSON only — no markdown, no extra text."
+                        ),
+                    ),
+                )
+                elapsed = round(time.time() - start, 2)
+                content = response.text.strip()
+                logger.info(f"Gemini ({model_name} via genai) response in {elapsed:.1f}s: {content[:80]}...")
+                signal = _parse_response(content, analysis)
+                signal["llm_model"] = model_name
+                signal["llm_inference_time"] = elapsed
+                _signal_cache[cache_key] = {"signal": signal, "time": time.time()}
+                _log_call({
+                    "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
+                    "model": model_name, "status": "SUCCESS", "prompt": prompt,
+                    "response_raw": content, "inference_time_sec": elapsed,
+                    "error": None, "parsed_signal": signal, "sdk_used": "google.genai",
+                })
+                return signal
+            except ImportError:
+                pass
+            except Exception as e:
+                last_err = str(e)
+                logger.warning(f"google.genai with {model_name} failed: {e}. Trying next option...")
+
+            # 2. Try legacy google.generativeai SDK
+            try:
+                import google.generativeai as genai
+                import warnings
+                warnings.filterwarnings("ignore")
+                genai.configure(api_key=key)
+                model = genai.GenerativeModel(
+                    model_name,
+                    generation_config=genai.GenerationConfig(
+                        temperature=0.2,
+                        response_mime_type="application/json",
+                        max_output_tokens=1024,
+                    ),
+                    system_instruction=(
+                        "You are an expert Indian F&O options trader. "
+                        "Always respond with valid JSON only — no markdown, no extra text."
+                    ),
+                )
+                start = time.time()
+                response = model.generate_content(prompt)
+                elapsed = round(time.time() - start, 2)
+                content = response.text.strip()
+                logger.info(f"Gemini ({model_name} via legacy) response in {elapsed:.1f}s: {content[:80]}...")
+                signal = _parse_response(content, analysis)
+                signal["llm_model"] = model_name
+                signal["llm_inference_time"] = elapsed
+                _signal_cache[cache_key] = {"signal": signal, "time": time.time()}
+                _log_call({
+                    "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
+                    "model": model_name, "status": "SUCCESS", "prompt": prompt,
+                    "response_raw": content, "inference_time_sec": elapsed,
+                    "error": None, "parsed_signal": signal, "sdk_used": "google.generativeai",
+                })
+                return signal
+            except Exception as e:
+                last_err = str(e)
+                logger.warning(f"Legacy SDK with {model_name} failed: {e}")
+
+        # All models exhausted — set 60s cooldown to protect quota
+        _last_error = last_err
+        _last_error_time = time.time()
+        _cooldown_until = time.time() + 60.0
+        _log_call({
+            "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
+            "model": config.GEMINI_MODEL, "status": "ERROR", "prompt": prompt,
+            "response_raw": None, "inference_time_sec": 0,
+            "error": f"Quota/API Rate Limited — Falling back to rule-based analysis ({last_err})",
+            "parsed_signal": None, "sdk_used": "failed_all",
+        })
+        return _rule_based_signal(analysis)
+
+    finally:
+        call_lock.release()
+
+
+def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> dict:
+    """Executes an interactive test call to verify Gemini API Key and logs full query & answer."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
 
     key = _get_api_key()
     if not key:
-        logger.warning("No Gemini API key configured — using rule-based fallback.")
-        return _rule_based_signal(analysis)
+        err_msg = "GEMINI_API_KEY is not set. Please set it in .env file or environment variable."
+        entry = {
+            "id": _next_log_id(),
+            "timestamp": ist_time,
+            "symbol": symbol,
+            "model": config.GEMINI_MODEL,
+            "status": "NO_API_KEY",
+            "prompt": custom_prompt or "Test Query: Market Status and Bias Check",
+            "response_raw": None,
+            "inference_time_sec": 0,
+            "error": err_msg,
+            "parsed_signal": None,
+            "sdk_used": "none",
+        }
+        _log_call(entry)
+        return {"status": "error", "message": err_msg, "entry": entry}
 
-    prompt = _build_prompt(analysis)
+    prompt = custom_prompt or (
+        "You are an expert Indian stock market options trading assistant.\n"
+        "Question: NIFTY is currently trading at 23,750 with PCR of 1.22 (Bullish) and RSI at 57. "
+        "What is the recommended intraday bias and key risk tip?\n\n"
+        "Respond in structured JSON format with fields: signal, confidence, reasoning, key_risk, market_bias, trade_tip."
+    )
 
-    # Try new google.genai SDK first, then fall back to old google.generativeai
-    try:
-        from google import genai as gai
-        client = gai.Client(api_key=key)
-        start = time.time()
-        response = client.models.generate_content(
-            model=config.GEMINI_MODEL,
-            contents=prompt,
-            config=gai.types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=1024,
-                response_mime_type="application/json",
-                system_instruction=(
-                    "You are an expert Indian F&O options trader. "
-                    "Always respond with valid JSON only — no markdown, no extra text."
+    candidate_models = [config.GEMINI_MODEL] + [
+        m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-2.0-flash", "gemini-1.5-flash"])
+        if m != config.GEMINI_MODEL
+    ]
+
+    last_err = None
+    for model_name in candidate_models:
+        # 1. Try google.genai
+        try:
+            from google import genai as gai
+            client = gai.Client(api_key=key)
+            start = time.time()
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=gai.types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=1024,
                 ),
-            ),
-        )
-        elapsed = time.time() - start
-        content = response.text.strip()
-        logger.info(f"Gemini (genai) response in {elapsed:.1f}s: {content[:80]}...")
-        signal = _parse_response(content, analysis)
-        signal["llm_model"] = config.GEMINI_MODEL
-        signal["llm_inference_time"] = round(elapsed, 2)
-        _signal_cache[symbol] = {"signal": signal, "time": time.time()}
-        return signal
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.warning(f"google.genai call failed: {e}. Trying legacy SDK...")
-        # record last error for status endpoint
-        try:
-            import time as _time
-            _last_error = str(e)
-            _last_error_time = _time.time()
-        except Exception:
-            pass
+            )
+            elapsed = round(time.time() - start, 2)
+            content = response.text.strip()
+            entry = {
+                "id": _next_log_id(),
+                "timestamp": ist_time,
+                "symbol": symbol,
+                "model": model_name,
+                "status": "SUCCESS",
+                "prompt": prompt,
+                "response_raw": content,
+                "inference_time_sec": elapsed,
+                "error": None,
+                "parsed_signal": None,
+                "sdk_used": "google.genai",
+            }
+            _log_call(entry)
+            return {"status": "ok", "message": f"Test call successful via google.genai ({model_name})", "entry": entry}
+        except Exception as e1:
+            last_err = str(e1)
+            logger.warning(f"Test call with google.genai ({model_name}) failed: {e1}. Trying legacy SDK...")
 
-    # Fallback: try old google.generativeai
-    try:
-        import google.generativeai as genai
-        import warnings
-        warnings.filterwarnings("ignore")
-        genai.configure(api_key=key)
-        model = genai.GenerativeModel(
-            config.GEMINI_MODEL,
-            generation_config=genai.GenerationConfig(
-                temperature=0.2,
-                response_mime_type="application/json",
-                max_output_tokens=1024,
-            ),
-            system_instruction=(
-                "You are an expert Indian F&O options trader. "
-                "Always respond with valid JSON only — no markdown, no extra text."
-            ),
-        )
-        start = time.time()
-        response = model.generate_content(prompt)
-        elapsed = time.time() - start
-        content = response.text.strip()
-        logger.info(f"Gemini (legacy) response in {elapsed:.1f}s: {content[:80]}...")
-        signal = _parse_response(content, analysis)
-        signal["llm_model"] = config.GEMINI_MODEL
-        signal["llm_inference_time"] = round(elapsed, 2)
-        _signal_cache[symbol] = {"signal": signal, "time": time.time()}
-        return signal
-    except Exception as e:
-        logger.warning(f"Gemini API call failed: {e}. Using rule-based fallback.")
+        # 2. Try google.generativeai
         try:
-            import time as _time
-            _last_error = str(e)
-            _last_error_time = _time.time()
-        except Exception:
-            pass
+            import google.generativeai as genai
+            genai.configure(api_key=key)
+            model = genai.GenerativeModel(model_name)
+            start = time.time()
+            response = model.generate_content(prompt)
+            elapsed = round(time.time() - start, 2)
+            content = response.text.strip()
+            entry = {
+                "id": _next_log_id(),
+                "timestamp": ist_time,
+                "symbol": symbol,
+                "model": model_name,
+                "status": "SUCCESS",
+                "prompt": prompt,
+                "response_raw": content,
+                "inference_time_sec": elapsed,
+                "error": None,
+                "parsed_signal": None,
+                "sdk_used": "google.generativeai",
+            }
+            _log_call(entry)
+            return {"status": "ok", "message": f"Test call successful via google.generativeai ({model_name})", "entry": entry}
+        except Exception as e2:
+            last_err = str(e2)
+            logger.warning(f"Test call with google.generativeai ({model_name}) failed: {e2}")
 
-    return _rule_based_signal(analysis)
+    entry = {
+        "id": _next_log_id(),
+        "timestamp": ist_time,
+        "symbol": symbol,
+        "model": config.GEMINI_MODEL,
+        "status": "ERROR",
+        "prompt": prompt,
+        "response_raw": None,
+        "inference_time_sec": 0,
+        "error": last_err or "All candidate models failed",
+        "parsed_signal": None,
+        "sdk_used": "failed_all_sdks",
+    }
+    _log_call(entry)
+    return {"status": "error", "message": last_err or "All models failed", "entry": entry}
+
 
 
 import re
@@ -312,21 +525,22 @@ def _parse_response(content: str, analysis: dict) -> dict:
     if match:
         raw_json = match.group(0)
         result = None
+        # 1. Standard json loads with strict=False
         try:
-            result = json.loads(raw_json)
-        except json.JSONDecodeError:
+            result = json.loads(raw_json, strict=False)
+        except Exception:
             try:
-                # Convert raw literal newlines inside JSON strings to \n escape sequences
+                # 2. Convert raw literal newlines inside JSON strings to \n escape sequences
                 fixed_json = re.sub(r'(?<=: ")(.*?)(?=",\n|"\n\})', lambda m: m.group(1).replace("\n", "\\n").replace("\r", ""), raw_json, flags=re.DOTALL)
-                result = json.loads(fixed_json)
-            except Exception as e:
-                logger.warning(f"JSON decode failed after newline cleanup: {e}")
+                result = json.loads(fixed_json, strict=False)
+            except Exception:
+                pass
 
-        if result and isinstance(result, dict) and "signal" in result and "confidence" in result:
+        if result and isinstance(result, dict) and "signal" in result:
             result["source"] = "gemini_api"
             return _enrich_signal(result, analysis)
 
-    logger.warning(f"Could not parse Gemini JSON, using rule-based. Raw: {content[:200]}")
+    logger.warning(f"Could not parse Gemini JSON, falling back to rule signal. Raw: {content[:150]}")
     return _rule_based_signal(analysis)
 
 
@@ -341,41 +555,69 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     side = "call" if otype == "CE" else "put"
     budget_side = budget_advice.get(side, {})
 
-    # Ensure accurate premium is displayed even for WAIT
-    prem = signal.get("entry_premium", 0)
-    if not prem or prem <= 0:
-        prem = analysis.get("atm_put_ltp", 0) if otype == "PE" else analysis.get("atm_call_ltp", 0)
-        signal["entry_premium"] = round(prem, 2)
+    strike = signal.get("strike", analysis.get("atm_strike", 0))
 
-    if not signal.get("target_premium"):
-        signal["target_premium"] = round(prem * (1 + config.PROFIT_TARGET_PCT), 2)
-    if not signal.get("stop_loss_premium"):
-        signal["stop_loss_premium"] = round(prem * (1 - config.STOP_LOSS_PCT), 2)
+    # Look up actual live option LTP for recommended strike from real NSE chain data
+    chain_rows = analysis.get("chain", []) or analysis.get("chain_summary", [])
+    strike_row = next((r for r in chain_rows if r.get("strike") == strike), None)
 
-    signal.setdefault("lots_recommended", budget_side.get("lots", 1))
-    signal.setdefault("estimated_cost_inr", round(prem * lot_size, 2))
-    signal.setdefault("max_profit_inr", round((signal["target_premium"] - prem) * lot_size, 2))
-    signal.setdefault("max_loss_inr", round((prem - signal["stop_loss_premium"]) * lot_size, 2))
+    real_live_prem = 0.0
+    if strike_row:
+        real_live_prem = float(strike_row.get("put_ltp" if otype == "PE" else "call_ltp", 0) or 0)
+
+    if real_live_prem <= 0:
+        real_live_prem = float(analysis.get("atm_put_ltp", 0) if otype == "PE" else analysis.get("atm_call_ltp", 0) or 0)
+
+    # Use the real live market premium as the exact entry price
+    prem = round(real_live_prem, 2) if real_live_prem > 0 else round(signal.get("entry_premium", 0) or 0, 2)
+    signal["entry_premium"] = prem
+
+    target_prem = round(prem * (1 + config.PROFIT_TARGET_PCT), 2) if prem else 0
+    sl_prem = round(prem * (1 - config.STOP_LOSS_PCT), 2) if prem else 0
+    signal["target_premium"] = target_prem
+    signal["stop_loss_premium"] = sl_prem
+
+    lots = budget_side.get("lots", 1)
+    signal["lots_recommended"] = lots
+    signal["estimated_cost_inr"] = round(prem * lot_size * lots, 2)
+    signal["max_profit_inr"] = round((target_prem - prem) * lot_size * lots, 2)
+    signal["max_loss_inr"] = round((prem - sl_prem) * lot_size * lots, 2)
 
     # Add Recommended Holding Time & Action Plan
     conf = signal.get("confidence", 50)
     sig_name = signal.get("signal", "WAIT")
-    strike = signal.get("strike", analysis.get("atm_strike", 0))
 
-    tgt_pct = int(config.PROFIT_TARGET_PCT * 100)
-    sl_pct = int(config.STOP_LOSS_PCT * 100)
+    tgt_pct = round(config.PROFIT_TARGET_PCT * 100)
+    sl_pct = round(config.STOP_LOSS_PCT * 100)
+
+    # Determine holding minutes — use Gemini's suggestion if provided, else estimate from confidence
+    gemini_hold_mins = signal.get("holding_minutes")
+    if gemini_hold_mins and isinstance(gemini_hold_mins, (int, float)) and 5 <= int(gemini_hold_mins) <= 135:
+        hold_mins = int(gemini_hold_mins)
+    else:
+        # Rule-based estimate: stronger signal = shorter time to reach target
+        if conf >= 90:
+            hold_mins = 20
+        elif conf >= 80:
+            hold_mins = 30
+        else:
+            hold_mins = 45
+    signal["holding_minutes"] = hold_mins
 
     if sig_name == "BUY_CALL":
-        signal["holding_time"] = "30 – 60 Minutes (Trend Ride)" if conf >= 75 else "15 – 30 Minutes (Quick Scalp)"
-        signal["action_summary"] = f"BUY {symbol} {strike} CE @ ₹{signal['entry_premium']} on Groww"
-        signal["exit_rule"] = f"Book profit at ₹{signal['target_premium']} (+{tgt_pct}%) or Exit at SL ₹{signal['stop_loss_premium']} (-{sl_pct}%). Trail SL to breakeven at +10%."
+        signal["holding_time"] = f"~{hold_mins} Minutes (Book at +{tgt_pct}% target)"
+        signal["action_summary"] = f"BUY {symbol} {strike} CE @ \u20b9{prem} on Groww"
+        signal["exit_rule"] = (f"Hold {hold_mins} min or until premium hits \u20b9{target_prem} (+{tgt_pct}%). "
+                               f"Exit immediately at SL \u20b9{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +8%.")
     elif sig_name == "BUY_PUT":
-        signal["holding_time"] = "30 – 60 Minutes (Trend Ride)" if conf >= 75 else "15 – 30 Minutes (Quick Scalp)"
-        signal["action_summary"] = f"BUY {symbol} {strike} PE @ ₹{signal['entry_premium']} on Groww"
-        signal["exit_rule"] = f"Book profit at ₹{signal['target_premium']} (+{tgt_pct}%) or Exit at SL ₹{signal['stop_loss_premium']} (-{sl_pct}%). Trail SL to breakeven at +10%."
+        signal["holding_time"] = f"~{hold_mins} Minutes (Book at +{tgt_pct}% target)"
+        signal["action_summary"] = f"BUY {symbol} {strike} PE @ \u20b9{prem} on Groww"
+        signal["exit_rule"] = (f"Hold {hold_mins} min or until premium hits \u20b9{target_prem} (+{tgt_pct}%). "
+                               f"Exit immediately at SL \u20b9{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +8%.")
     else:
-        signal["holding_time"] = "0 Mins — Stay on Sidelines"
-        signal["action_summary"] = "HOLD CASH — Wait for technical breakout"
+        signal["holding_minutes"] = 0
+        signal["holding_time"] = "0 Mins \u2014 Stay on Sidelines"
+        signal["action_summary"] = "HOLD CASH \u2014 Wait for 9:30\u201311:45 AM breakout"
         signal["exit_rule"] = "Do not enter position while market is consolidating"
 
     signal["lot_size"] = lot_size
@@ -391,31 +633,29 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
 # ─── Trading Window Filter ────────────────────────────────────
 def _is_good_trading_window() -> tuple:
     """
-    Returns (is_allowed, reason) based on time-of-day.
-    Only allows entries during the two best intraday windows:
-      - 9:45–11:15 AM  (morning institutional trend)
-      - 14:00–14:45 PM (afternoon momentum)
-    Blocks entries during chop zones and volatile open/close.
+    Returns (is_allowed, reason_str) based on IST time-of-day.
+    LIVE WINDOW: 9:30 AM – 11:45 AM only.
+      • Skips the volatile 9:15–9:30 open (wide spreads, IV spike).
+      • Ends at 11:45 AM before lunch chop erodes premium.
+    This tight window preserves Gemini API quota and captures the
+    best institutional momentum of the day.
     """
     from datetime import datetime
-    now = datetime.now()
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
-    # Pre-market / first 30 min volatility — AVOID
-    if mins < 9 * 60 + 45:
-        return False, "Avoiding first 30 min — spreads wide, IV crush risk"
-    # Morning trend window — BEST
-    if mins <= 11 * 60 + 15:
-        return True, "Morning trend window (9:45–11:15)"
-    # Lunch chop zone — AVOID
-    if mins < 14 * 60:
-        return False, "Lunch chop zone (11:15–14:00) — theta decay eats premium"
-    # Afternoon momentum — GOOD
-    if mins <= 14 * 60 + 45:
-        return True, "Afternoon momentum window (14:00–14:45)"
-    # Last hour square-off pressure — AVOID
-    return False, "Avoiding last 45 min — square-off pressure, unpredictable"
+    open_mins  = 9 * 60 + 30   # 9:30 AM
+    close_mins = 11 * 60 + 45  # 11:45 AM
+
+    if mins < open_mins:
+        wait = open_mins - mins
+        return False, f"Window opens at 9:30 AM IST ({wait} min away) — spreads stabilise after open"
+    if mins <= close_mins:
+        remaining = close_mins - mins
+        return True, f"Morning window active 9:30–11:45 AM ({remaining} min remaining)"
+    return False, "Morning window closed (11:45 AM+) — no new entries after 11:45"
 
 
 # ─── Consecutive Loss Tracker ────────────────────────────────
@@ -454,12 +694,12 @@ def _rule_based_signal(analysis: dict) -> dict:
     consec_losses = _get_consecutive_losses(symbol)
     loss_blocked = consec_losses >= 2  # Pause after 2 consecutive losses
 
-    # ── Gate 3: Strong Signal Confirmation (bias >= 5) ─────
-    # Require at least 3-4 indicators agreeing before entry
-    ENTRY_THRESHOLD = 5
+    # ── Gate 3: Directional Bias Threshold ────────────────
+    # Score of ±3 represents strong directional confirmation (e.g. PCR + MACD + RSI/Momentum)
+    ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLD", 3)
 
     if bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked:
-        signal, otype, confidence = "BUY_CALL", "CE", min(92, 55 + bias_score * 7)
+        signal, otype, confidence = "BUY_CALL", "CE", min(99, 75 + bias_score * 6)
         reasoning = (
             f"WHY BUY CALL (CE) — STRONG CONFIRMATION:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≥{ENTRY_THRESHOLD} met)\n"
@@ -471,7 +711,7 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Groww Strategy: Buy {atm} CE, set limit order within bid-ask spread."
         )
     elif bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked:
-        signal, otype, confidence = "BUY_PUT", "PE", min(92, 55 + abs(bias_score) * 7)
+        signal, otype, confidence = "BUY_PUT", "PE", min(99, 75 + abs(bias_score) * 6)
         reasoning = (
             f"WHY BUY PUT (PE) — STRONG CONFIRMATION:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≤-{ENTRY_THRESHOLD} met)\n"

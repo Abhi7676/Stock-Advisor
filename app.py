@@ -18,7 +18,14 @@ from flask_cors import CORS
 
 import config
 from analysis_engine import analyze_index
-from gemini_advisor import get_signal, is_gemini_available, get_gemini_model_name, get_last_error
+from gemini_advisor import (
+    get_signal,
+    is_gemini_available,
+    get_gemini_model_name,
+    get_last_error,
+    get_gemini_call_logs,
+    test_gemini_call,
+)
 
 # ─── App Setup ────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -120,14 +127,28 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
             sl_p = row["sl_premium"] or (entry_p * 0.6)
             created_str = row["created_at"]
 
-            # Calculate current option LTP using live spot index movement
+            # Calculate elapsed time in minutes for 1hr exit tracking
+            mins_elapsed = 0.0
+            if created_str:
+                try:
+                    c_dt = datetime.fromisoformat(created_str)
+                    now_dt = datetime.now()
+                    if c_dt.tzinfo is not None and now_dt.tzinfo is None:
+                        c_dt = c_dt.replace(tzinfo=None)
+                    elif c_dt.tzinfo is None and now_dt.tzinfo is not None:
+                        now_dt = now_dt.replace(tzinfo=None)
+                    mins_elapsed = max(0.0, (now_dt - c_dt).total_seconds() / 60.0)
+                except Exception:
+                    mins_elapsed = 0.0
+
+            # Calculate current option LTP from live NSE option chain
             curr_p = None
             for c in chain:
                 if c.get("strike") == strike:
-                    curr_p = c.get("call_ltp") if otype == "CE" else c.get("put_ltp")
+                    curr_p = float(c.get("call_ltp") if otype == "CE" else c.get("put_ltp") or 0)
                     break
 
-            if not curr_p or curr_p <= 0 or abs(spot_now - entry_spot) > 0.1:
+            if not curr_p or curr_p <= 0:
                 from nse_data import black_scholes
                 T = (4.25 / 365.0) if symbol == "NIFTY" else (26.0 / 365.0)
                 if symbol == "NIFTY":
@@ -135,15 +156,6 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 else:
                     iv = 0.115 if otype == "CE" else 0.113
                 curr_p = black_scholes(spot_now, strike, T, 0.07, iv, otype)
-
-            # If spot hasn't ticked yet, simulate realistic intraday delta drift based on time
-            created_dt = datetime.fromisoformat(created_str)
-            mins_elapsed = (datetime.now() - created_dt).total_seconds() / 60.0
-
-            if curr_p == entry_p and mins_elapsed > 0.2:
-                row_bias = row["bias_score"] if "bias_score" in row.keys() and row["bias_score"] is not None else 0
-                drift_factor = 1.0 + (0.008 * (mins_elapsed ** 0.6) * (1 if row_bias >= 0 else -1))
-                curr_p = round(entry_p * drift_factor, 2)
 
             lot_size = config.INDICES[symbol]["lot_size"]
             pnl_pct = round(((curr_p - entry_p) / entry_p) * 100.0, 2)
@@ -172,9 +184,11 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 else:
                     new_status = f"STOP LOSS HIT ({pnl_pct}%) 🛑"
                 closed_at = now_iso
-            elif mins_elapsed >= 45.0:
-                # Extended from 30 to 45 min for strong trends
-                new_status = f"CLOSED (45m) {'+' if pnl_pct >= 0 else ''}{pnl_pct}%"
+            elif mins_elapsed >= 60.0:
+                # Auto-close after 1 hour — assess "hold for 1hr" result
+                outcome = "PROFIT" if pnl_pct > 0 else "LOSS"
+                emoji = "🎉" if pnl_pct > 0 else "🛑"
+                new_status = f"1HR EXIT — {outcome} {'+' if pnl_pct >= 0 else ''}{pnl_pct}% {emoji}"
                 closed_at = now_iso
                 is_win = pnl_pct > 0
 
@@ -237,11 +251,11 @@ def index():
     return send_from_directory(".", "index.html")
 
 
-@app.route("/<path:path>")
-def static_files(path):
-    if os.path.exists(os.path.join(config.BASE_DIR, path)):
-        return send_from_directory(".", path)
-    return send_from_directory(".", "index.html")
+@app.route("/gemini-monitor", methods=["GET"])
+@app.route("/gemini_monitor.html", methods=["GET"])
+def route_gemini_monitor():
+    """Serves the Gemini API Call Inspector & Monitor page."""
+    return send_from_directory(".", "gemini_monitor.html")
 
 
 @app.route("/api/signal/<symbol>", methods=["GET"])
@@ -346,18 +360,59 @@ def api_market_pulse():
 
 @app.route("/api/signal-history", methods=["GET"])
 def api_signal_history():
-    """Returns last 20 saved signals from the database."""
+    """Returns recent trade signals — one per 1-hour window, each with its 1hr hold outcome."""
     limit = int(request.args.get("limit", 20))
     try:
         conn = sqlite3.connect(config.DB_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
+        # Fetch all non-WAIT rows, newest first
         rows = cursor.execute(
-            "SELECT * FROM signal_history ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT * FROM signal_history WHERE signal IN ('BUY_CALL','BUY_PUT') ORDER BY id DESC LIMIT 200"
         ).fetchall()
-        result = [dict(r) for r in rows]
         conn.close()
-        return jsonify({"status": "ok", "count": len(result), "data": result})
+
+        # Deduplicate: keep only 1 signal per 1-hour window per symbol
+        seen_hour_buckets = {}
+        deduped = []
+        for r in rows:
+            created = r["created_at"] or ""
+            try:
+                dt = datetime.fromisoformat(created)
+                # Bucket key = symbol + YYYY-MM-DD HH (hourly bucket)
+                bucket = f"{r['symbol']}_{dt.strftime('%Y-%m-%d_%H')}"
+            except Exception:
+                bucket = f"{r['symbol']}_{r['id']}"
+
+            if bucket not in seen_hour_buckets:
+                seen_hour_buckets[bucket] = True
+                row_dict = dict(r)
+
+                # Build a clear human-readable outcome for the UI
+                status = row_dict.get("status", "ACTIVE")
+                pnl = row_dict.get("pnl_pct") or 0
+                entry_p = row_dict.get("entry_premium") or 0
+                exit_p = row_dict.get("exit_premium") or 0
+
+                if "ACTIVE" in status:
+                    row_dict["outcome"] = "⏳ ACTIVE"
+                    row_dict["outcome_class"] = "active"
+                elif pnl > 0:
+                    row_dict["outcome"] = f"✅ PROFIT +{pnl:.1f}%  (Entry ₹{entry_p} → Exit ₹{exit_p:.1f})"
+                    row_dict["outcome_class"] = "profit"
+                elif pnl < 0:
+                    row_dict["outcome"] = f"❌ LOSS {pnl:.1f}%  (Entry ₹{entry_p} → Exit ₹{exit_p:.1f})"
+                    row_dict["outcome_class"] = "loss"
+                else:
+                    row_dict["outcome"] = f"➖ BREAKEVEN {pnl:.1f}%"
+                    row_dict["outcome_class"] = "neutral"
+
+                deduped.append(row_dict)
+
+            if len(deduped) >= limit:
+                break
+
+        return jsonify({"status": "ok", "count": len(deduped), "data": deduped})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -390,6 +445,30 @@ def api_gemini_status():
     })
 
 
+@app.route("/api/gemini-calls", methods=["GET"])
+def api_gemini_calls():
+    """Returns recent Gemini API calls including exact prompts and responses."""
+    limit = int(request.args.get("limit", 50))
+    logs = get_gemini_call_logs(limit)
+    return jsonify({
+        "status": "ok",
+        "count": len(logs),
+        "data": logs,
+        "active_model": get_gemini_model_name(),
+        "is_available": is_gemini_available(),
+    })
+
+
+@app.route("/api/gemini-test-call", methods=["POST"])
+def api_gemini_test_call():
+    """Triggers an interactive test call to Gemini and returns immediate prompt & response."""
+    payload = request.get_json(silent=True) or {}
+    custom_prompt = payload.get("prompt")
+    symbol = payload.get("symbol", "TEST")
+    result = test_gemini_call(custom_prompt, symbol)
+    return jsonify(result)
+
+
 @app.route("/api/refresh/<symbol>", methods=["POST"])
 def api_force_refresh(symbol: str):
     """Force-refreshes analysis and signal for a symbol."""
@@ -419,19 +498,26 @@ def api_debug():
     return jsonify(result)
 
 
+@app.route("/<path:path>")
+def static_files(path):
+    if os.path.exists(os.path.join(config.BASE_DIR, path)):
+        return send_from_directory(".", path)
+    return send_from_directory(".", "index.html")
+
+
 # ─── Startup ──────────────────────────────────────────────────────────────────
 
+# Initialize DB and start background threads at import time
+# (works for both `python app.py` and gunicorn)
+_init_db()
+logger.info("Starting initial data fetch for Nifty & BankNifty...")
+for _sym in ["NIFTY", "BANKNIFTY"]:
+    _t = threading.Thread(target=_refresh, args=(_sym, True), daemon=True)
+    _t.start()
+_bg = threading.Thread(target=_background_refresh, daemon=True)
+_bg.start()
+
+
 if __name__ == "__main__":
-    _init_db()
-    # Initial warm-up
-    logger.info("Starting initial data fetch for Nifty & BankNifty...")
-    for sym in ["NIFTY", "BANKNIFTY"]:
-        t = threading.Thread(target=_refresh, args=(sym, True), daemon=True)
-        t.start()
-
-    # Background refresh thread
-    bg = threading.Thread(target=_background_refresh, daemon=True)
-    bg.start()
-
     logger.info(f"🚀 F&O AI Advisor running at http://{config.HOST}:{config.PORT}")
     app.run(host=config.HOST, port=config.PORT, debug=False, use_reloader=False)

@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini API Calls Inspector | F&amp;O AI Advisor</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Apply saved theme BEFORE paint to avoid white flash -->
+  <script>
+    (function() {
+      if (localStorage.getItem('fao_theme') === 'light') {
+        document.documentElement.classList.add('light-preload');
+      }
+    })();
+  </script>
+  <style>
+    .monitor-container {
+      max-width: 1400px;
+      margin: 24px auto;
+      padding: 0 20px;
+      width: 100%;
+      flex: 1;
+    }
+
+    .monitor-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: var(--bg-panel);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .monitor-title-box {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .monitor-title-icon {
+      font-size: 2rem;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(99,102,241,0.3);
+    }
+
+    .monitor-title h1 {
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(90deg, #fff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    body.light .monitor-title h1 {
+      background: linear-gradient(90deg, #0d0d0d, #374151);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .monitor-title p {
+      font-size: 0.82rem;
+      color: var(--text-2);
+      margin-top: 2px;
+    }
+
+    .monitor-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* Stats Row */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--bg-panel);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      transition: border-color 0.2s;
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-hi);
+    }
+
+    .stat-icon {
+      font-size: 1.6rem;
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+    }
+
+    .stat-info .stat-lbl {
+      font-size: 0.72rem;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+
+    .stat-info .stat-num {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: var(--text-1);
+      font-family: var(--mono);
+      margin-top: 2px;
+    }
+
+    /* Test Panel Card */
+    .test-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+    }
+
+    .test-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .test-header h2 {
+      font-size: 1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .prompt-presets {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .preset-chip {
+      font-size: 0.75rem;
+      padding: 4px 10px;
+      background: rgba(99,102,241,0.12);
+      border: 1px solid rgba(99,102,241,0.25);
+      color: #cbd5e1;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .preset-chip:hover {
+      background: rgba(99,102,241,0.25);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .test-input-group {
+      display: flex;
+      gap: 12px;
+    }
+
+    .test-textarea {
+      flex: 1;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      color: var(--text-1);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      resize: vertical;
+      min-height: 70px;
+      outline: none;
+    }
+
+    .test-textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(99,102,241,0.2);
+    }
+
+    /* Logs Feed */
+    .feed-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .feed-filters {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .filter-search {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 14px;
+      color: var(--text-1);
+      font-size: 0.82rem;
+      outline: none;
+      min-width: 220px;
+    }
+
+    .filter-search:focus {
+      border-color: var(--border-hi);
+    }
+
+    .filter-btn {
+      padding: 6px 12px;
+      font-size: 0.76rem;
+      border-radius: 8px;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .filter-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    /* Call Item Card */
+    .call-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 18px;
+      overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .call-card:hover {
+      border-color: rgba(99,178,255,0.25);
+    }
+
+    .call-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+    }
+
+    .call-head-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .call-id {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-3);
+    }
+
+    .call-status-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.04em;
+    }
+
+    .call-status-badge.success {
+      background: var(--call-dim);
+      color: var(--call);
+      border: 1px solid rgba(0,230,118,0.3);
+    }
+
+    .call-status-badge.error {
+      background: var(--put-dim);
+      color: var(--put);
+      border: 1px solid rgba(255,82,82,0.3);
+    }
+
+    .call-status-badge.nokey {
+      background: var(--wait-glow);
+      color: var(--wait);
+      border: 1px solid rgba(245,158,11,0.3);
+    }
+
+    .call-sym-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: rgba(99,102,241,0.15);
+      color: #c7d2fe;
+      border: 1px solid rgba(99,102,241,0.3);
+      font-family: var(--mono);
+    }
+
+    .call-time {
+      font-size: 0.75rem;
+      color: var(--text-3);
+      font-family: var(--mono);
+    }
+
+    .call-head-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .call-latency {
+      font-size: 0.75rem;
+      color: var(--text-2);
+      font-family: var(--mono);
+      background: rgba(0,0,0,0.3);
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    .call-body {
+      padding: 18px 20px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 900px) {
+      .call-body {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .section-box {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-2);
+    }
+
+    .section-head span.icon {
+      margin-right: 6px;
+    }
+
+    .copy-btn {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      cursor: pointer;
+    }
+
+    .copy-btn:hover {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .section-content {
+      padding: 12px 14px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: #cbd5e1;
+      line-height: 1.5;
+      max-height: 380px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .ai-answer-preview {
+      margin-bottom: 10px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+    }
+
+    .ai-signal-tag {
+      display: inline-block;
+      font-weight: 700;
+      font-size: 0.8rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+
+    .ai-signal-tag.buy-call { background: var(--call-dim); color: var(--call); }
+    .ai-signal-tag.buy-put  { background: var(--put-dim);  color: var(--put);  }
+    .ai-signal-tag.wait     { background: var(--wait-glow); color: var(--wait); }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      background: var(--bg-panel);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      color: var(--text-3);
+    }
+
+    .empty-state h3 {
+      color: var(--text-1);
+      margin-bottom: 6px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="monitor-container">
+
+    <!-- ── Header ────────────────────────────────────────────── -->
+    <div class="monitor-header">
+      <div class="monitor-title-box">
+        <div class="monitor-title-icon">⚡</div>
+        <div class="monitor-title">
+          <h1>Gemini API Call Inspector &amp; Live Monitor</h1>
+          <p>Real-time transparency into questions asked, live market inputs sent, and exact AI responses returned</p>
+        </div>
+      </div>
+      <div class="monitor-actions">
+        <a href="/" class="btn btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
+          ← Back to Trading Terminal
+        </a>
+        <button id="themeToggleBtn" onclick="toggleTheme()" title="Switch Light / Dark mode">
+          <span class="theme-icon" id="themeIcon">🌙</span>
+          <span id="themeLabel">Light Mode</span>
+        </button>
+        <button class="btn btn-sm" id="btnRefreshLogs">
+          🔄 Refresh Logs
+        </button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--text-2);cursor:pointer;">
+          <input type="checkbox" id="chkAutoRefresh" checked /> Auto-refresh (8s)
+        </label>
+      </div>
+    </div>
+
+    <!-- ── Stats Overview ────────────────────────────────────── -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon">📊</div>
+        <div class="stat-info">
+          <div class="stat-lbl">Total Calls Recorded</div>
+          <div class="stat-num" id="statTotalCalls">0</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🤖</div>
+        <div class="stat-info">
+          <div class="stat-lbl">Configured Model</div>
+          <div class="stat-num" id="statModelName" style="font-size:1rem;color:var(--accent);">—</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">⏱️</div>
+        <div class="stat-info">
+          <div class="stat-lbl">Avg Response Latency</div>
+          <div class="stat-num" id="statAvgLatency">—</div>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🔑</div>
+        <div class="stat-info">
+          <div class="stat-lbl">API Key Status</div>
+          <div class="stat-num" id="statKeyStatus" style="font-size:1rem;">Checking...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Quick Test Tool ───────────────────────────────────── -->
+    <div class="test-card">
+      <div class="test-header">
+        <h2><span>🧪</span> Test Gemini API Key &amp; View Live Response</h2>
+        <span style="font-size:.75rem;color:var(--text-3);">Send an immediate test prompt to confirm your key is responding</span>
+      </div>
+
+      <div class="prompt-presets">
+        <span style="font-size:.75rem;color:var(--text-3);align-self:center;">Quick Presets:</span>
+        <button class="preset-chip" onclick="setPresetPrompt('nifty')">NIFTY 50 Option Setup</button>
+        <button class="preset-chip" onclick="setPresetPrompt('banknifty')">Bank Nifty Trend Query</button>
+        <button class="preset-chip" onclick="setPresetPrompt('risk')">Risk &amp; Greeks Question</button>
+      </div>
+
+      <div class="test-input-group">
+        <textarea id="testPromptInput" class="test-textarea" placeholder="Type a custom market question or click a preset above..."></textarea>
+        <button class="btn btn-primary" id="btnRunTestCall" style="min-width:160px;font-size:.85rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;">
+          <span>⚡ Send Prompt</span>
+          <span style="font-size:.68rem;opacity:.8;">Inspect Answer</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Call Log Feed ─────────────────────────────────────── -->
+    <div class="feed-header">
+      <div style="font-size:1.05rem;font-weight:700;display:flex;align-items:center;gap:8px;">
+        <span>📋</span> API Call History (<span id="logCountLabel">0</span>)
+      </div>
+      <div class="feed-filters">
+        <input type="text" id="filterSearch" class="filter-search" placeholder="🔍 Search prompt, response, strike..." />
+        <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+        <button class="filter-btn" data-filter="SUCCESS" onclick="setFilter('SUCCESS')">Success</button>
+        <button class="filter-btn" data-filter="ERROR" onclick="setFilter('ERROR')">Errors</button>
+        <button class="filter-btn" data-filter="NIFTY" onclick="setFilter('NIFTY')">Nifty</button>
+        <button class="filter-btn" data-filter="BANKNIFTY" onclick="setFilter('BANKNIFTY')">BankNifty</button>
+      </div>
+    </div>
+
+    <div id="callLogsContainer">
+      <div class="empty-state">
+        <h3>Loading API call logs...</h3>
+        <p>Connecting to backend signal server</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let allLogs = [];
+    let currentFilter = 'all';
+    let autoRefreshTimer = null;
+
+    const PRESETS = {
+      nifty: `You are an expert Indian F&O options trader.
+Live Market Data: NIFTY 50 Spot at ₹23,720 (+0.42%), PCR is 1.25 (Bullish), ATM Strike 23,700, RSI(14) is 58.2, Supertrend is BUY.
+Question: Provide a structured option trading signal for Groww with recommended strike, entry premium, target (+20%), and stop loss (-10%).
+Respond in valid JSON format only.`,
+
+      banknifty: `You are an expert Indian F&O options trader.
+Live Market Data: BANK NIFTY Spot at ₹56,900 (-0.35%), PCR is 0.82 (Bearish), ATM Strike 56,900, RSI(14) is 42.1, EMA(9/21) Death Cross.
+Question: Analyze the put-buying setup and specify key risk and execution plan in valid JSON format.`,
+
+      risk: `You are an expert Indian options advisor.
+Question: Explain the importance of Delta and Theta decay when buying 1 lot of weekly Nifty options with ₹10,000 budget on Groww. Respond in JSON format with concise trading advice.`
+    };
+
+    function setPresetPrompt(key) {
+      document.getElementById('testPromptInput').value = PRESETS[key] || '';
+    }
+
+    async function loadGeminiStatus() {
+      try {
+        const res = await fetch('/api/gemini-status');
+        const data = await res.json();
+        const keyEl = document.getElementById('statKeyStatus');
+        const modelEl = document.getElementById('statModelName');
+
+        modelEl.textContent = data.model || 'gemini-3.6-flash';
+        if (data.api_key_set) {
+          keyEl.textContent = 'Active (Connected)';
+          keyEl.style.color = 'var(--call)';
+        } else {
+          keyEl.textContent = 'Key Missing (.env)';
+          keyEl.style.color = 'var(--put)';
+        }
+      } catch (e) {
+        console.error('Status fetch failed', e);
+      }
+    }
+
+    async function loadGeminiLogs() {
+      try {
+        const res = await fetch('/api/gemini-calls?limit=100');
+        const json = await res.json();
+        if (json.status === 'ok') {
+          allLogs = json.data || [];
+          updateStats(allLogs);
+          renderLogs();
+        }
+      } catch (e) {
+        console.error('Logs fetch failed', e);
+      }
+    }
+
+    function updateStats(logs) {
+      document.getElementById('statTotalCalls').textContent = logs.length;
+      document.getElementById('logCountLabel').textContent = logs.length;
+
+      const successLogs = logs.filter(l => l.status === 'SUCCESS' && l.inference_time_sec > 0);
+      if (successLogs.length > 0) {
+        const avg = successLogs.reduce((acc, l) => acc + (l.inference_time_sec || 0), 0) / successLogs.length;
+        document.getElementById('statAvgLatency').textContent = `${avg.toFixed(2)}s`;
+      } else {
+        document.getElementById('statAvgLatency').textContent = '—';
+      }
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-filter') === filter);
+      });
+      renderLogs();
+    }
+
+    function renderLogs() {
+      const container = document.getElementById('callLogsContainer');
+      const search = (document.getElementById('filterSearch').value || '').toLowerCase();
+
+      let filtered = allLogs.filter(log => {
+        if (currentFilter === 'SUCCESS' && log.status !== 'SUCCESS') return false;
+        if (currentFilter === 'ERROR' && log.status === 'SUCCESS') return false;
+        if (currentFilter === 'NIFTY' && log.symbol !== 'NIFTY') return false;
+        if (currentFilter === 'BANKNIFTY' && log.symbol !== 'BANKNIFTY') return false;
+
+        if (search) {
+          const str = `${log.symbol} ${log.prompt || ''} ${log.response_raw || ''} ${log.error || ''}`.toLowerCase();
+          if (!str.includes(search)) return false;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <h3>No API calls found</h3>
+            <p>No Gemini calls match the selected filter or no calls have been made yet.</p>
+            <button class="btn btn-sm btn-primary" onclick="setPresetPrompt('nifty'); document.getElementById('btnRunTestCall').click();" style="margin-top:12px;">
+              ⚡ Run a Test Call Now
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = filtered.map(log => {
+        const isSuccess = log.status === 'SUCCESS';
+        const isNoKey = log.status === 'NO_API_KEY';
+        const badgeClass = isSuccess ? 'success' : isNoKey ? 'nokey' : 'error';
+        const badgeText = isSuccess ? 'SUCCESS (200)' : isNoKey ? 'NO API KEY' : 'ERROR / FALLBACK';
+
+        const promptText = escapeHtml(log.prompt || '—');
+        const responseText = escapeHtml(log.response_raw || (log.error ? `Error: ${log.error}` : 'No response'));
+
+        let parsedPreviewHtml = '';
+        if (log.parsed_signal && typeof log.parsed_signal === 'object') {
+          const sig = log.parsed_signal;
+          const sigClass = sig.signal === 'BUY_CALL' ? 'buy-call' : sig.signal === 'BUY_PUT' ? 'buy-put' : 'wait';
+          parsedPreviewHtml = `
+            <div class="ai-answer-preview">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                <span class="ai-signal-tag ${sigClass}">${sig.signal || 'WAIT'} (Conf: ${sig.confidence || 0}%)</span>
+                <span style="font-size:.75rem;color:var(--text-3);">Strike: ₹${sig.strike || 'ATM'} | Lot: ₹${sig.entry_premium || 0}</span>
+              </div>
+              <div style="font-size:.76rem;color:var(--text-2);margin-bottom:4px;"><strong>Reasoning:</strong> ${escapeHtml(sig.reasoning || '—')}</div>
+              ${sig.key_risk ? `<div style="font-size:.72rem;color:#f87171;"><strong>Key Risk:</strong> ${escapeHtml(sig.key_risk)}</div>` : ''}
+              ${sig.trade_tip ? `<div style="font-size:.72rem;color:var(--cyan);margin-top:2px;"><strong>Groww Tip:</strong> ${escapeHtml(sig.trade_tip)}</div>` : ''}
+            </div>
+          `;
+        }
+
+        return `
+          <div class="call-card" id="call-${log.id}">
+            <div class="call-head">
+              <div class="call-head-left">
+                <span class="call-id">#${log.id}</span>
+                <span class="call-status-badge ${badgeClass}">${badgeText}</span>
+                <span class="call-sym-badge">${log.symbol || 'MARKET'}</span>
+                <span class="call-time">🕒 ${log.timestamp || ''}</span>
+              </div>
+              <div class="call-head-right">
+                <span class="call-latency">⏱️ ${log.inference_time_sec ? log.inference_time_sec + 's' : '0s'}</span>
+                <span style="font-size:.72rem;color:var(--text-3);font-family:var(--mono);">${log.sdk_used || 'gemini'}</span>
+              </div>
+            </div>
+
+            <div class="call-body">
+              <!-- Left: Exact Question / Input Sent to Gemini -->
+              <div class="section-box">
+                <div class="section-head">
+                  <div><span class="icon">📤</span> Question / Input Prompt Sent to Gemini</div>
+                  <button class="copy-btn" onclick="copyText(this, \`${escapeJs(log.prompt || '')}\`)">📋 Copy Prompt</button>
+                </div>
+                <div class="section-content">${promptText}</div>
+              </div>
+
+              <!-- Right: Exact Answer / Output Returned by Gemini -->
+              <div class="section-box">
+                <div class="section-head">
+                  <div><span class="icon">📥</span> Gemini AI Answer &amp; Structured Output</div>
+                  <button class="copy-btn" onclick="copyText(this, \`${escapeJs(log.response_raw || log.error || '')}\`)">📋 Copy Response</button>
+                </div>
+                <div class="section-content">
+                  ${parsedPreviewHtml}
+                  <div style="font-size:.7rem;color:var(--text-3);margin-bottom:4px;font-weight:600;">RAW GEMINI RESPONSE:</div>
+                  <div>${responseText}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function escapeJs(str) {
+      if (!str) return '';
+      return str.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    }
+
+    function copyText(btn, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = '✓ Copied!';
+        btn.style.background = 'var(--call)';
+        btn.style.color = '#000';
+        setTimeout(() => {
+          btn.textContent = orig;
+          btn.style.background = '';
+          btn.style.color = '';
+        }, 1500);
+      });
+    }
+
+    // Trigger Test Call
+    document.getElementById('btnRunTestCall').addEventListener('click', async () => {
+      const btn = document.getElementById('btnRunTestCall');
+      const input = document.getElementById('testPromptInput');
+      const prompt = input.value.trim();
+
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳ Sending...</span><span style="font-size:.68rem;">Awaiting Gemini</span>';
+
+      try {
+        const res = await fetch('/api/gemini-test-call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: prompt || undefined, symbol: 'TEST' })
+        });
+        const data = await res.json();
+        await loadGeminiLogs();
+      } catch (e) {
+        alert('Test call failed: ' + e);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>⚡ Send Prompt</span><span style="font-size:.68rem;opacity:.8;">Inspect Answer</span>';
+      }
+    });
+
+    document.getElementById('btnRefreshLogs').addEventListener('click', () => {
+      loadGeminiLogs();
+      loadGeminiStatus();
+    });
+
+    document.getElementById('filterSearch').addEventListener('input', () => {
+      renderLogs();
+    });
+
+    // Auto-refresh handler
+    document.getElementById('chkAutoRefresh').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        startAutoRefresh();
+      } else {
+        clearInterval(autoRefreshTimer);
+      }
+    });
+
+    function startAutoRefresh() {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = setInterval(() => {
+        loadGeminiLogs();
+      }, 8000);
+    }
+
+    // Init
+    setPresetPrompt('nifty');
+    loadGeminiStatus();
+    loadGeminiLogs();
+    startAutoRefresh();
+
+    // ── Theme Sync (shared with main page via localStorage) ────
+    function toggleTheme() {
+      const isLight = document.body.classList.toggle('light');
+      localStorage.setItem('fao_theme', isLight ? 'light' : 'dark');
+      _applyThemeUI(isLight);
+    }
+    function _applyThemeUI(isLight) {
+      const icon  = document.getElementById('themeIcon');
+      const label = document.getElementById('themeLabel');
+      if (icon)  icon.textContent  = isLight ? '☀️' : '🌙';
+      if (label) label.textContent = isLight ? 'Dark Mode' : 'Light Mode';
+    }
+    // Apply saved theme on load
+    (function() {
+      const saved = localStorage.getItem('fao_theme');
+      if (saved === 'light') {
+        document.body.classList.add('light');
+        _applyThemeUI(true);
+      }
+    })();
+  </script>
+</body>
+</html>

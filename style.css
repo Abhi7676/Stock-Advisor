@@ -40,6 +40,169 @@
   --shadow: 0 8px 32px rgba(0,0,0,0.4);
 }
 
+/* ─── Light Mode (Groww-inspired) ──────────────────────────────
+   Clean white background, #0d0d0d text, teal accent (#00b386)
+   matching Groww's professional trading UI aesthetic.           */
+body.light {
+  --bg:            #f0f2f5;
+  --bg-panel:      rgba(255,255,255,0.95);
+  --bg-card:       rgba(255,255,255,0.98);
+  --bg-card-hover: rgba(248,250,252,1);
+  --border:        rgba(0,0,0,0.09);
+  --border-hi:     rgba(0,179,134,0.4);
+
+  --text-1: #0d0d0d;
+  --text-2: #4b5563;
+  --text-3: #9ca3af;
+
+  --call: #00b386;         /* Groww green */
+  --call-glow: rgba(0,179,134,0.15);
+  --call-dim:  rgba(0,179,134,0.08);
+  --put:  #e03131;
+  --put-glow:  rgba(224,49,49,0.15);
+  --put-dim:   rgba(224,49,49,0.08);
+  --wait: #e67700;
+  --wait-glow: rgba(230,119,0,0.15);
+
+  --accent:   #00b386;
+  --accent-2: #087f5b;
+  --shadow: 0 4px 20px rgba(0,0,0,0.08);
+}
+
+body.light {
+  background: var(--bg);
+  background-image:
+    radial-gradient(at 0% 0%,   rgba(0,179,134,0.04) 0px, transparent 55%),
+    radial-gradient(at 100% 0%, rgba(0,179,134,0.03) 0px, transparent 45%);
+  color: var(--text-1);
+}
+
+/* Light mode header */
+body.light header {
+  background: rgba(255,255,255,0.97);
+  border-bottom: 1px solid rgba(0,0,0,0.09);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+}
+
+/* Light mode ticker bar */
+body.light .ticker-wrap {
+  background: #fff;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+body.light .ticker-name  { color: #4b5563; }
+body.light .ticker-price { color: #0d0d0d; }
+
+/* Light mode refresh bar */
+body.light .refresh-bar {
+  background: rgba(0,179,134,0.07);
+  border-bottom: 1px solid rgba(0,179,134,0.18);
+  color: #374151;
+}
+
+/* Light mode brand */
+body.light .brand-name {
+  background: linear-gradient(90deg, #0d0d0d 0%, #374151 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Light mode panels */
+body.light .panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+body.light .panel-title { border-bottom: 1px solid rgba(0,0,0,0.07); }
+
+/* Light mode signal cards */
+body.light .signal-card { background: var(--bg-card); border: 1px solid var(--border); }
+
+/* Light mode buttons */
+body.light .btn {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.12);
+  color: #0d0d0d;
+}
+body.light .btn:hover { background: #f8fafc; }
+body.light .btn-primary {
+  background: linear-gradient(135deg, #00b386, #087f5b);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 14px rgba(0,179,134,0.35);
+}
+body.light .btn-primary:hover { box-shadow: 0 6px 20px rgba(0,179,134,0.5); }
+
+/* Light mode status pills */
+body.light .status-pill.market-open  { background:rgba(0,179,134,0.1); border-color:rgba(0,179,134,0.3); }
+body.light .status-pill.market-closed{ background:rgba(224,49,49,0.08); border-color:rgba(224,49,49,0.25); }
+body.light .status-pill.gemini-on    { background:rgba(0,179,134,0.1); border-color:rgba(0,179,134,0.3); color:var(--accent); }
+
+/* Light mode history, indicators, misc text */
+body.light .history-item { border-bottom:1px solid rgba(0,0,0,0.06); }
+body.light ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); }
+
+/* ─── Theme Toggle Button ────────────────────────────────────── */
+#themeToggleBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 15px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-1);
+  font-family: var(--font);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .25s ease;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+#themeToggleBtn:hover {
+  border-color: var(--border-hi);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+body.light #themeToggleBtn {
+  background: #fff;
+  border-color: rgba(0,0,0,0.12);
+  color: #0d0d0d;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+body.light #themeToggleBtn:hover {
+  background: #f8fafc;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+#themeToggleBtn .theme-icon { font-size: 1rem; transition: transform .35s ease; }
+#themeToggleBtn:hover .theme-icon { transform: rotate(20deg); }
+
+/* ─── Footer ─────────────────────────────────────────────────── */
+.app-footer {
+  margin-top: auto;
+  padding: 20px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  line-height: 1.7;
+}
+.app-footer .footer-dev {
+  font-weight: 700;
+  color: var(--text-2);
+  font-size: 0.82rem;
+  margin-bottom: 4px;
+}
+.app-footer .footer-dev span {
+  color: var(--accent);
+}
+body.light .app-footer {
+  background: #fff;
+  border-top: 1px solid rgba(0,0,0,0.08);
+}
+
+
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 
 html { scroll-behavior: smooth; }
@@ -314,6 +477,33 @@ header {
 }
 .exec-val.pos { color: var(--call); }
 .exec-val.neg { color: var(--put); }
+
+/* ─── Light mode: fix AI Reasoning & Execution card text ─────── */
+body.light .reasoning-box {
+  background: rgba(241,245,249,0.9);
+  border: 1px solid rgba(0,0,0,0.1);
+}
+body.light .reasoning-label {
+  color: #0369a1;
+}
+body.light #niftyReasoning,
+body.light #bnReasoning {
+  color: #1e293b;
+}
+body.light .execution-card {
+  background: rgba(241,245,249,0.95);
+  border: 1px solid rgba(0,179,134,0.25);
+}
+body.light .exec-title {
+  color: #087f5b;
+}
+body.light .exec-val {
+  color: #0d0d0d;
+}
+body.light .exec-label {
+  color: #4b5563;
+}
+
 .signal-box.call-box::before { background: linear-gradient(90deg, var(--call), #00bfa5); }
 .signal-box.put-box::before  { background: linear-gradient(90deg, var(--put),  #ff1744); }
 .signal-box.wait-box::before { background: linear-gradient(90deg, var(--wait), #f97316); }
@@ -626,8 +816,245 @@ footer strong { color:var(--nse-saffron); }
   grid-column: 1 / -1;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE — Full Phone Support
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Tablet (≤ 900px) ─────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .app-grid {
+    grid-template-columns: 1fr;
+    padding: 14px 16px;
+    gap: 14px;
+  }
+
+  .signal-card {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  header {
+    padding: 10px 16px;
+    gap: 8px;
+  }
+
+  .header-right {
+    gap: 8px;
+  }
+
+  .brand-name { font-size: 1rem; }
+  .brand-tagline { display: none; }
+
+  .refresh-bar {
+    padding: 5px 16px;
+    font-size: 0.7rem;
+  }
+}
+
+/* ── Phone (≤ 640px) ──────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .signal-card { grid-template-columns: 1fr; }
-  .trade-details { grid-template-columns: 1fr 1fr; }
-  .indicators-grid { grid-template-columns: repeat(3, 1fr); }
+  /* Header: stack brand + buttons */
+  header {
+    padding: 10px 12px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .brand {
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .brand-logo {
+    width: 36px;
+    height: 36px;
+    font-size: 1.1rem;
+    border-radius: 10px;
+    flex-shrink: 0;
+  }
+
+  .brand-name {
+    font-size: 0.82rem;
+    letter-spacing: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .brand-tagline { display: none; }
+
+  .header-right {
+    width: 100%;
+    justify-content: space-between;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  /* Hide Gemini pill text on very small screens, keep dot only */
+  #geminiText { display: none; }
+  .status-pill { padding: 5px 8px; font-size: 0.68rem; }
+
+  #themeToggleBtn {
+    padding: 6px 10px;
+    font-size: 0.72rem;
+  }
+  #themeLabel { display: none; }
+
+  .btn { padding: 7px 11px; font-size: 0.75rem; }
+  .btn-primary { padding: 8px 12px; font-size: 0.78rem; }
+
+  /* Refresh bar — single line scroll */
+  .refresh-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 5px 12px;
+    font-size: 0.68rem;
+  }
+
+  /* Main grid */
+  .app-grid {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+
+  /* Signal cards — full width stacked */
+  .signal-card {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .signal-box {
+    padding: 16px 14px;
+    gap: 12px;
+  }
+
+  .signal-ltp {
+    font-size: 1.2rem;
+  }
+
+  .signal-main-text {
+    font-size: 1.3rem;
+  }
+
+  .signal-emoji { font-size: 1.6rem; }
+
+  /* Trade details: 3 cols on phone */
+  .trade-details {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .trade-stat {
+    padding: 6px 8px;
+  }
+
+  .trade-stat-label { font-size: 0.6rem; }
+  .trade-stat-val   { font-size: 0.82rem; }
+
+  /* Technical indicators: 2 cols on phone */
+  .indicators-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  /* PCR gauge: stack vertically */
+  .pcr-gauge-row {
+    flex-direction: row;
+    gap: 10px;
+  }
+
+  .pcr-value { font-size: 1.5rem; }
+
+  /* Options chain: smaller font, horizontal scroll */
+  .chain-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .chain-table {
+    font-size: 0.68rem;
+    min-width: 320px;
+  }
+
+  .chain-table th,
+  .chain-table td {
+    padding: 5px 4px;
+  }
+
+  /* History list */
+  .history-list { max-height: 220px; }
+
+  .history-item {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+    font-size: 0.72rem;
+  }
+
+  .history-detail {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    width: 100%;
+    flex: none;
+  }
+
+  /* Execution card */
+  .exec-row {
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.74rem;
+  }
+
+  .exec-label { min-width: unset; }
+
+  /* Bias meter labels */
+  .bias-labels { font-size: 0.58rem; }
+
+  /* Panels */
+  .panel {
+    padding: 14px 12px;
+  }
+
+  .panel-title {
+    font-size: 0.82rem;
+    margin-bottom: 12px;
+  }
+
+  /* Gemini inspector banner — stack */
+  .panel[style*="flex"] {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    padding: 16px 14px !important;
+    gap: 12px !important;
+  }
+
+  /* Disclaimer */
+  .disclaimer {
+    font-size: 0.7rem;
+    padding: 8px 12px;
+  }
+
+  /* Footer */
+  .app-footer {
+    padding: 14px 12px;
+    font-size: 0.7rem;
+  }
+
+  footer {
+    padding: 10px 12px;
+    font-size: 0.68rem;
+  }
+}
+
+/* ── Very small phones (≤ 380px) ──────────────────────────────── */
+@media (max-width: 380px) {
+  .brand-name { font-size: 0.72rem; }
+  .signal-main-text { font-size: 1.1rem; }
+  .signal-ltp { font-size: 1rem; }
+  .trade-details { grid-template-columns: repeat(2, 1fr); }
+  .pcr-value { font-size: 1.2rem; }
 }

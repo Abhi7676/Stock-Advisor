@@ -43,6 +43,10 @@
         <span class="pulse amber" id="geminiDot"></span>
         <span id="geminiText">Gemini AI: Checking...</span>
       </div>
+      <button id="themeToggleBtn" onclick="toggleTheme()" title="Switch between Light and Dark mode">
+        <span class="theme-icon" id="themeIcon">🌙</span>
+        <span id="themeLabel">Light Mode</span>
+      </button>
       <button class="btn btn-primary" id="btnRefreshAll">
         🔄 Refresh Signals
       </button>
@@ -413,13 +417,43 @@
       </div>
     </div>
 
+    <!-- ════════════════════════════════════════════
+         Gemini API Key Inspector & Monitoring Banner
+    ════════════════════════════════════════════ -->
+    <div class="panel" style="grid-column: 1 / -1; background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(168,85,247,0.08)); border: 1px solid rgba(99,102,241,0.3); padding: 22px 28px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; border-radius: var(--radius);">
+      <div style="display: flex; align-items: center; gap: 16px;">
+        <div style="font-size: 2.2rem; background: rgba(99,102,241,0.2); width: 54px; height: 54px; border-radius: 14px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(99,102,241,0.4);">
+          ⚡
+        </div>
+        <div>
+          <div style="font-size: 1.1rem; font-weight: 800; color: var(--text-1); letter-spacing: -0.01em;">
+            Gemini AI API Calls &amp; Reasoning Inspector
+          </div>
+          <div style="font-size: 0.82rem; color: var(--text-2); margin-top: 3px;">
+            Monitor live questions, input prompts sent to Gemini, and exact answers received from your API key in real-time.
+          </div>
+        </div>
+      </div>
+      <div>
+        <a href="gemini_monitor.html" id="btnCheckGeminiCalls" class="btn btn-primary" target="_blank" style="text-decoration: none; padding: 12px 24px; font-size: 0.92rem; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 4px 20px rgba(99,102,241,0.35); cursor: pointer;">
+          <span>🔍</span> Check gemini api key calls
+        </a>
+      </div>
+    </div>
+
   </div>
 
-  <!-- ── Footer ──────────────────────────────────────────────── -->
-  <footer>
-    <strong>F&amp;O AI Signal Advisor</strong> — NSE India live data • Google Gemini AI • 100% Free &amp; Private •
-    Budget: ₹10,000 | Risk per trade: ₹5,000 max | Target: +30% | SL: -40%<br>
-    <span style="color:#ef4444;">⚠ For educational use only. Not SEBI registered advice. Always trade with your own judgment.</span>
+  <!-- ── Footer ───────────────────────────────────────────── -->
+  <footer class="app-footer">
+    <div class="footer-dev">
+      Developed by <span>Abhishek Raibagi</span> &nbsp;&mdash;&nbsp; GenAI / Data Engineer
+    </div>
+    <div>
+      <strong>F&amp;O AI Signal Advisor</strong> &mdash; NSE India live data &bull; Google Gemini AI &bull; 100% Free &amp; Private
+    </div>
+    <div style="margin-top:6px">
+      <span style="color:#ef4444;">⚠ For educational use only. Not SEBI registered advice. Always trade with your own judgment.</span>
+    </div>
   </footer>
 
   <script src="app.js"></script>

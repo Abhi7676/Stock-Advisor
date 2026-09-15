@@ -20,20 +20,20 @@ INDICES = {
         "display_name": "Nifty 50",
         "lot_size": 75,
         "yf_symbol": "^NSEI",
-        "option_chain_url": "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY",
     },
     "BANKNIFTY": {
         "symbol": "BANKNIFTY",
         "display_name": "Bank Nifty",
         "lot_size": 30,
         "yf_symbol": "^NSEBANK",
-        "option_chain_url": "https://www.nseindia.com/api/option-chain-indices?symbol=BANKNIFTY",
     },
 }
 
 # ─── NSE API Base URLs ─────────────────────────────────────
 NSE_BASE_URL = "https://www.nseindia.com"
 NSE_ALL_INDICES_URL = "https://www.nseindia.com/api/allIndices"
+NSE_CONTRACT_INFO_URL = "https://www.nseindia.com/api/option-chain-contract-info"
+NSE_OPTION_CHAIN_V3_URL = "https://www.nseindia.com/api/option-chain-v3"
 NSE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -42,8 +42,8 @@ NSE_HEADERS = {
     ),
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer": "https://www.nseindia.com/",
+    "Accept-Encoding": "gzip, deflate",
+    "Referer": "https://www.nseindia.com/option-chain",
     "Connection": "keep-alive",
 }
 
@@ -79,15 +79,19 @@ PRE_OPEN = time(9, 0)
 # ─── User Budget Settings ─────────────────────────────────
 USER_BUDGET_INR = 10000
 RISK_PER_TRADE_PCT = 0.5    # Max 50% of budget in one trade = ₹5000
-PROFIT_TARGET_PCT = 0.20    # Target 20% on premium (realistic, 1:2 R:R)
-STOP_LOSS_PCT = 0.10        # Stop at 10% loss on premium (tight, capital protection)
+PROFIT_TARGET_PCT = 0.15    # Target 15% on premium — realistic in the 9:30–11:45 morning window
+STOP_LOSS_PCT = 0.08        # Stop at 8% loss on premium (tight capital protection)
+ENTRY_THRESHOLD = 3         # Minimum composite bias score (3 = balanced: signals fire regularly)
+                            # 3 → fires when 3+ indicators align (PCR + OI + 1 technical)
+                            # 4 → more selective, fewer signals but higher conviction
+                            # 5 → ultra-selective, rarely fires (not recommended for testing)
 
 # ─── Google Gemini API Settings (Free Tier) ──────────────────
 # Get your free API key from: https://aistudio.google.com/app/apikey
-# IMPORTANT: Do NOT hard-code your API key into source. Set the
-# environment variable `GEMINI_API_KEY` on the host instead.
+# Standard production models have 1,500 requests/day & 15 req/min on free tier
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
-GEMINI_MODEL = "gemini-3.6-flash"    # Active Gemini model
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")    # Active Gemini model
+GEMINI_FALLBACK_MODELS = ["gemini-3.6-flash"]
 GEMINI_TIMEOUT = 30   # seconds
 
 # ─── Execution Costs / Slippage (for backtesting realism) ────
@@ -99,9 +103,9 @@ SLIPPAGE_PCT = float(os.environ.get("SLIPPAGE_PCT", 0.01))
 # ─── NSE API & Refresh Settings ──────────────────────────────
 NSE_REFRESH_INTERVAL = 15   # Refresh live market data every 15 seconds!
 
-# ─── Flask Server ──────────────────────────────────────────
-HOST = "127.0.0.1"
-PORT = 5000
+# ─── Flask Server ──────────────────────────────────────────────────
+HOST = "0.0.0.0"
+PORT = int(os.environ.get("PORT", 5000))
 DEBUG = False
 
 # ─── Data Refresh ─────────────────────────────────────────

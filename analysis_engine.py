@@ -98,6 +98,7 @@ def analyze_index(symbol: str) -> dict:
             "NEUTRAL"
         ),
         # Top OI strikes for dashboard
+        "chain": chain,
         "chain_summary": _chain_summary(chain, atm_strike),
     }
 
