@@ -90,8 +90,8 @@ ENTRY_THRESHOLD = 3         # Minimum composite bias score (3 = balanced: signal
 # Get your free API key from: https://aistudio.google.com/app/apikey
 # Standard production models have 1,500 requests/day & 15 req/min on free tier
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")    # Active Gemini model
-GEMINI_FALLBACK_MODELS = ["gemini-3.6-flash"]
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")    # Active Gemini model
+GEMINI_FALLBACK_MODELS = ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
 GEMINI_TIMEOUT = 30   # seconds
 
 # ─── Execution Costs / Slippage (for backtesting realism) ────
