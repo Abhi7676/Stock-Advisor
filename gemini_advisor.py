@@ -10,6 +10,7 @@ Free tier: 1,500 requests/day | 15 req/min — more than enough!
 import json
 import logging
 import os
+import threading
 import time
 
 import config
@@ -20,8 +21,24 @@ logger = logging.getLogger(__name__)
 _last_error = None
 _last_error_time = 0.0
 
+# ─── Gemini Pause Toggle ─────────────────────────────────────
+# When True, get_signal() skips the Gemini API call entirely
+# and falls back to the rule-based signal — saving tokens.
+_gemini_paused = False
+_gemini_paused_lock = threading.Lock()
+
+def set_gemini_paused(paused: bool):
+    """Enable or disable sending requests to the Gemini API."""
+    global _gemini_paused
+    with _gemini_paused_lock:
+        _gemini_paused = bool(paused)
+
+def is_gemini_paused() -> bool:
+    """Returns True if Gemini API calls are currently paused by the user."""
+    with _gemini_paused_lock:
+        return _gemini_paused
+
 # ─── Gemini Call Inspector / Log Storage ─────────────────────
-import threading
 _call_logs = []
 _call_logs_lock = threading.Lock()
 _call_counter = 0
@@ -285,6 +302,13 @@ def get_signal(analysis: dict) -> dict:
 
     if not key:
         logger.info("No Gemini API key — using confirmed rule-based trade signal.")
+        return rule_sig
+
+    # ── User-requested Gemini pause ────────────────────────────
+    if is_gemini_paused():
+        logger.info(f"Gemini API is PAUSED by user — returning rule-based signal for {symbol}.")
+        rule_sig["source"] = "rule_based (Gemini paused)"
+        rule_sig["llm_model"] = "Paused (token save mode)"
         return rule_sig
 
     # ── Deduplication Lock ─────────────────────────────────

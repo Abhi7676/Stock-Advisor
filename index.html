@@ -9,6 +9,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // ── Auth Guard: redirect to /login if not authenticated ──
+    // Only run guard if NOT already on /login to prevent loops
+    (function() {
+      if (window.location.pathname === '/login') return;
+      const authed = sessionStorage.getItem('fao_authed') === '1' ||
+                     localStorage.getItem('fao_authed') === '1';
+      if (!authed) { window.location.replace('/login'); }
+    })();
+  </script>
 </head>
 <body>
 
@@ -426,11 +436,67 @@
           <div class="gemini-banner-sub">Monitor live questions, input prompts sent to Gemini, and exact answers received from your API key in real-time.</div>
         </div>
       </div>
-      <div class="gemini-banner-action">
+      <div class="gemini-banner-action" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <a href="gemini_monitor.html" id="btnCheckGeminiCalls" class="btn btn-primary" target="_blank">
           <span>🔍</span> Check gemini api key calls
         </a>
+        <button id="btnGeminiPause"
+          onclick="toggleGeminiPause()"
+          style="display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;
+                 font-size:.82rem;font-weight:700;cursor:pointer;border:2px solid;
+                 background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.55);color:#ef4444;
+                 transition:all .25s ease;"
+          title="Stop or resume Gemini API calls to save tokens">
+          <span id="geminiPauseIcon">⏸️</span>
+          <span id="geminiPauseLabel">Stop Gemini API</span>
+        </button>
       </div>
+      <script>
+        // ── Gemini Pause Toggle (inline, runs before DOMContentLoaded) ──
+        (async function initGeminiPauseBtn() {
+          try {
+            const r = await fetch('/api/gemini-status');
+            const d = await r.json();
+            _applyGeminiPauseState(d.paused === true);
+          } catch(e) { /* ignore */ }
+        })();
+
+        async function toggleGeminiPause() {
+          const btn = document.getElementById('btnGeminiPause');
+          btn.disabled = true;
+          try {
+            const r = await fetch('/api/gemini-pause', { method: 'POST' });
+            const d = await r.json();
+            _applyGeminiPauseState(d.paused === true);
+          } catch(e) {
+            alert('Could not reach server: ' + e);
+          } finally {
+            btn.disabled = false;
+          }
+        }
+
+        function _applyGeminiPauseState(paused) {
+          const btn   = document.getElementById('btnGeminiPause');
+          const icon  = document.getElementById('geminiPauseIcon');
+          const label = document.getElementById('geminiPauseLabel');
+          if (!btn) return;
+          if (paused) {
+            btn.style.background    = 'rgba(16,185,129,0.15)';
+            btn.style.borderColor   = 'rgba(16,185,129,0.55)';
+            btn.style.color         = '#10b981';
+            icon.textContent        = '▶️';
+            label.textContent       = 'Resume Gemini API';
+            btn.title               = 'Gemini API is paused — click to resume and send signals to AI';
+          } else {
+            btn.style.background    = 'rgba(239,68,68,0.12)';
+            btn.style.borderColor   = 'rgba(239,68,68,0.55)';
+            btn.style.color         = '#ef4444';
+            icon.textContent        = '⏸️';
+            label.textContent       = 'Stop Gemini API';
+            btn.title               = 'Stop sending to Gemini API to save tokens';
+          }
+        }
+      </script>
     </div>
 
   </div>
@@ -446,7 +512,24 @@
     <div style="margin-top:6px">
       <span style="color:#ef4444;">⚠ For educational use only. Not SEBI registered advice. Always trade with your own judgment.</span>
     </div>
+    <div style="margin-top:10px">
+      <button onclick="logoutUser()" style="
+        display:inline-flex;align-items:center;gap:6px;
+        padding:7px 16px;border-radius:8px;border:1px solid rgba(239,68,68,0.4);
+        background:rgba(239,68,68,0.1);color:#ef4444;
+        font-size:.78rem;font-weight:700;cursor:pointer;
+        transition:background .2s,transform .15s;font-family:inherit;">
+        🚪 Logout — Abhishek
+      </button>
+    </div>
   </footer>
+  <script>
+    function logoutUser() {
+      sessionStorage.removeItem('fao_authed');
+      localStorage.removeItem('fao_authed');
+      window.location.href = '/logout';
+    }
+  </script>
 
   <script src="app.js"></script>
 </body>

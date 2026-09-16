@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timedelta
 from functools import lru_cache
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory, session, url_for
 from flask_cors import CORS
 
 import config
@@ -21,6 +21,8 @@ from analysis_engine import analyze_index
 from gemini_advisor import (
     get_signal,
     is_gemini_available,
+    is_gemini_paused,
+    set_gemini_paused,
     get_gemini_model_name,
     get_last_error,
     get_gemini_call_logs,
@@ -32,6 +34,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, static_folder=".")
+app.secret_key = os.environ.get("SECRET_KEY", "fao-signal-secret-2026-xyz")
 CORS(app)
 
 # ─── In-Memory Cache ──────────────────────────────────────────────────────────
@@ -173,7 +176,12 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 new_status = "ACTIVE (SL→BE)"  # Show trailing status in UI
 
             is_win = False
-            if curr_p >= target_p:
+            if pnl_pct >= 13.0:
+                # ── 13% Profit Cap — save & close trade immediately ──
+                new_status = f"✅ PROFIT TARGET HIT +{pnl_pct}% 🎯"
+                closed_at = now_iso
+                is_win = True
+            elif curr_p >= target_p:
                 new_status = f"PROFIT BOOKED ({'+' if pnl_pct >= 0 else ''}{pnl_pct}%) 🎉"
                 closed_at = now_iso
                 is_win = True
@@ -184,11 +192,11 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 else:
                     new_status = f"STOP LOSS HIT ({pnl_pct}%) 🛑"
                 closed_at = now_iso
-            elif mins_elapsed >= 60.0:
-                # Auto-close after 1 hour — assess "hold for 1hr" result
+            elif mins_elapsed >= 30.0:
+                # Auto-close after 30 minutes — assess "hold for 30min" result
                 outcome = "PROFIT" if pnl_pct > 0 else "LOSS"
                 emoji = "🎉" if pnl_pct > 0 else "🛑"
-                new_status = f"1HR EXIT — {outcome} {'+' if pnl_pct >= 0 else ''}{pnl_pct}% {emoji}"
+                new_status = f"30MIN EXIT — {outcome} {'+' if pnl_pct >= 0 else ''}{pnl_pct}% {emoji}"
                 closed_at = now_iso
                 is_win = pnl_pct > 0
 
@@ -244,7 +252,42 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
         logger.warning(f"Trade log tracking failed: {e}")
 
 
+# ─── Auth Helper ─────────────────────────────────────────────────────────────
+
+def _is_authed() -> bool:
+    """True if the current request has a valid session OR the client-side flag is set."""
+    return session.get("authed") is True
+
+
 # ─── REST API Routes ──────────────────────────────────────────────────────────
+
+@app.route("/login", methods=["GET"])
+def route_login():
+    """Serves the login page."""
+    if _is_authed():
+        return redirect(url_for("index"))
+    return send_from_directory(".", "login.html")
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    """Validates credentials and sets a server-side session."""
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    if username == "Abhishek" and password == "trade100":
+        session["authed"] = True
+        session.permanent = data.get("remember", False)
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "message": "Invalid credentials"}), 401
+
+
+@app.route("/logout")
+def route_logout():
+    """Clears the session and redirects to login."""
+    session.clear()
+    return redirect(url_for("route_login"))
+
 
 @app.route("/")
 def index():
@@ -360,7 +403,7 @@ def api_market_pulse():
 
 @app.route("/api/signal-history", methods=["GET"])
 def api_signal_history():
-    """Returns recent trade signals — one per 1-hour window, each with its 1hr hold outcome."""
+    """Returns recent trade signals — one per 30-min window, each with its 30min / 13%-cap outcome."""
     limit = int(request.args.get("limit", 20))
     try:
         conn = sqlite3.connect(config.DB_FILE)
@@ -372,15 +415,16 @@ def api_signal_history():
         ).fetchall()
         conn.close()
 
-        # Deduplicate: keep only 1 signal per 1-hour window per symbol
+        # Deduplicate: keep only 1 signal per 30-minute window per symbol
         seen_hour_buckets = {}
         deduped = []
         for r in rows:
             created = r["created_at"] or ""
             try:
                 dt = datetime.fromisoformat(created)
-                # Bucket key = symbol + YYYY-MM-DD HH (hourly bucket)
-                bucket = f"{r['symbol']}_{dt.strftime('%Y-%m-%d_%H')}"
+                # Bucket key = symbol + YYYY-MM-DD HH + half-hour slot (30-min bucket)
+                half = "00" if dt.minute < 30 else "30"
+                bucket = f"{r['symbol']}_{dt.strftime('%Y-%m-%d_%H')}_{half}"
             except Exception:
                 bucket = f"{r['symbol']}_{r['id']}"
 
@@ -441,6 +485,7 @@ def api_gemini_status():
         "engine": "Google Gemini API (Free Tier)",
         "api_key_set": has_key,
         "last_error": last_err,
+        "paused": is_gemini_paused(),
         "get_key_url": "https://aistudio.google.com/app/apikey",
     })
 
@@ -457,6 +502,23 @@ def api_gemini_calls():
         "active_model": get_gemini_model_name(),
         "is_available": is_gemini_available(),
     })
+
+@app.route("/api/gemini-pause", methods=["POST", "GET"])
+def api_gemini_pause():
+    """GET: returns current pause state. POST: toggles or sets pause state."""
+    if request.method == "GET":
+        return jsonify({"paused": is_gemini_paused()})
+
+    # POST — body can optionally send {"paused": true/false}; omit for toggle
+    payload = request.get_json(silent=True) or {}
+    if "paused" in payload:
+        new_state = bool(payload["paused"])
+    else:
+        new_state = not is_gemini_paused()  # toggle
+    set_gemini_paused(new_state)
+    logger.info(f"Gemini API calls {'PAUSED' if new_state else 'RESUMED'} by user request.")
+    return jsonify({"paused": new_state, "message": "Gemini API calls paused — token save mode active." if new_state else "Gemini API calls resumed."})
+
 
 
 @app.route("/api/gemini-test-call", methods=["POST"])

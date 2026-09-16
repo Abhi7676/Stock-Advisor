@@ -471,6 +471,17 @@
         <a href="/" class="btn btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;">
           ← Back to Trading Terminal
         </a>
+        <!-- ── Stop / Resume Gemini API button ── -->
+        <button id="btnMonitorGeminiPause"
+          onclick="toggleMonitorGeminiPause()"
+          style="display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:9px;
+                 font-size:.8rem;font-weight:700;cursor:pointer;border:2px solid;
+                 background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.5);color:#ef4444;
+                 transition:all .25s ease;"
+          title="Stop sending data to Gemini API — saves tokens">
+          <span id="monitorPauseIcon">⏸️</span>
+          <span id="monitorPauseLabel">Stop Gemini API</span>
+        </button>
         <button id="themeToggleBtn" onclick="toggleTheme()" title="Switch Light / Dark mode">
           <span class="theme-icon" id="themeIcon">🌙</span>
           <span id="themeLabel">Light Mode</span>
@@ -482,6 +493,17 @@
           <input type="checkbox" id="chkAutoRefresh" checked /> Auto-refresh (8s)
         </label>
       </div>
+    </div>
+
+    <!-- ── Gemini Paused Banner ──────────────────────────────── -->
+    <div id="geminiPausedBanner" style="display:none;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.45);
+         border-radius:10px;padding:10px 18px;margin-bottom:16px;
+         display:none;align-items:center;gap:10px;font-size:.82rem;color:#f59e0b;font-weight:600;">
+      ⏸️ &nbsp;<strong>Gemini API is PAUSED</strong> — Signals are using rule-based engine only. No tokens are being consumed.
+      &nbsp;<button onclick="toggleMonitorGeminiPause()"
+        style="margin-left:auto;padding:4px 12px;border-radius:6px;font-size:.75rem;
+               background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);
+               color:#10b981;cursor:pointer;font-weight:700;">▶️ Resume Gemini</button>
     </div>
 
     <!-- ── Stats Overview ────────────────────────────────────── -->
@@ -819,11 +841,62 @@ Question: Explain the importance of Delta and Theta decay when buying 1 lot of w
       }, 8000);
     }
 
+    // ── Gemini Pause Toggle ─────────────────────────────────
+    async function initMonitorPauseBtn() {
+      try {
+        const r = await fetch('/api/gemini-status');
+        const d = await r.json();
+        _applyMonitorPauseState(d.paused === true);
+      } catch(e) { /* server not ready yet */ }
+    }
+
+    async function toggleMonitorGeminiPause() {
+      const btn = document.getElementById('btnMonitorGeminiPause');
+      if (btn) btn.disabled = true;
+      try {
+        const r = await fetch('/api/gemini-pause', { method: 'POST' });
+        const d = await r.json();
+        _applyMonitorPauseState(d.paused === true);
+      } catch(e) {
+        alert('Could not reach server: ' + e);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function _applyMonitorPauseState(paused) {
+      const btn    = document.getElementById('btnMonitorGeminiPause');
+      const icon   = document.getElementById('monitorPauseIcon');
+      const label  = document.getElementById('monitorPauseLabel');
+      const banner = document.getElementById('geminiPausedBanner');
+
+      if (paused) {
+        if (btn) {
+          btn.style.background  = 'rgba(16,185,129,0.15)';
+          btn.style.borderColor = 'rgba(16,185,129,0.5)';
+          btn.style.color       = '#10b981';
+        }
+        if (icon)  icon.textContent  = '▶️';
+        if (label) label.textContent = 'Resume Gemini API';
+        if (banner) banner.style.display = 'flex';
+      } else {
+        if (btn) {
+          btn.style.background  = 'rgba(239,68,68,0.12)';
+          btn.style.borderColor = 'rgba(239,68,68,0.5)';
+          btn.style.color       = '#ef4444';
+        }
+        if (icon)  icon.textContent  = '⏸️';
+        if (label) label.textContent = 'Stop Gemini API';
+        if (banner) banner.style.display = 'none';
+      }
+    }
+
     // Init
     setPresetPrompt('nifty');
     loadGeminiStatus();
     loadGeminiLogs();
     startAutoRefresh();
+    initMonitorPauseBtn();
 
     // ── Theme Sync (shared with main page via localStorage) ────
     function toggleTheme() {

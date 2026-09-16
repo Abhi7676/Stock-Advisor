@@ -467,7 +467,7 @@ function renderHistory(rows) {
   if (!trades.length) {
     container.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-3);font-size:0.82rem">
       📊 <strong>No Trades Executed Yet</strong><br>
-      <span style="font-size:0.75rem;color:var(--text-3)">Signal History shows <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades — one per hour — with 1hr hold results (PROFIT / LOSS).</span>
+      <span style="font-size:0.75rem;color:var(--text-3)">Signal History shows <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades — one per 30 min — closed at <strong>13% profit cap</strong>, SL hit, or after 30 min hold.</span>
     </div>`;
     return;
   }
@@ -519,7 +519,7 @@ function renderHistory(rows) {
                     padding:5px 12px;border-radius:8px;font-size:0.78rem;font-weight:700;white-space:nowrap">
           ${outcome}
         </div>
-        <div style="font-size:0.67rem;color:var(--text-3);margin-top:3px;opacity:0.7">1hr hold result</div>
+        <div style="font-size:0.67rem;color:var(--text-3);margin-top:3px;opacity:0.7">30min result (% P&amp;L)</div>
       </div>
     </div>`;
   }).join("");
