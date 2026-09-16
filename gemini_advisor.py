@@ -130,6 +130,11 @@ def is_gemini_available() -> bool:
         import google.generativeai  # noqa
         return True
     except ImportError:
+        pass
+    try:
+        import requests  # noqa
+        return True
+    except ImportError:
         return False
 
 
@@ -299,34 +304,29 @@ def get_signal(analysis: dict) -> dict:
 
         prompt = _build_prompt(analysis)
         candidate_models = [config.GEMINI_MODEL] + [
-            m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-3.6-flash"])
+            m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])
             if m != config.GEMINI_MODEL
         ]
+
+        sys_instruction = (
+            "You are an expert Indian F&O options trader. "
+            "Always respond with valid JSON only — no markdown, no extra text."
+        )
 
         # Try models in order (primary -> fallbacks)
         last_err = None
         for model_name in candidate_models:
-            # 1. Try new google.genai SDK
             try:
-                from google import genai as gai
-                client = gai.Client(api_key=key)
                 start = time.time()
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=gai.types.GenerateContentConfig(
-                        temperature=0.2,
-                        max_output_tokens=1024,
-                        response_mime_type="application/json",
-                        system_instruction=(
-                            "You are an expert Indian F&O options trader. "
-                            "Always respond with valid JSON only — no markdown, no extra text."
-                        ),
-                    ),
+                content, sdk_used = _call_gemini_model(
+                    model_name=model_name,
+                    key=key,
+                    prompt=prompt,
+                    system_instruction=sys_instruction,
+                    json_mode=True,
                 )
                 elapsed = round(time.time() - start, 2)
-                content = response.text.strip()
-                logger.info(f"Gemini ({model_name} via genai) response in {elapsed:.1f}s: {content[:80]}...")
+                logger.info(f"Gemini ({model_name} via {sdk_used}) response in {elapsed:.1f}s: {content[:80]}...")
                 signal = _parse_response(content, analysis)
                 signal["llm_model"] = model_name
                 signal["llm_inference_time"] = elapsed
@@ -335,52 +335,12 @@ def get_signal(analysis: dict) -> dict:
                     "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
                     "model": model_name, "status": "SUCCESS", "prompt": prompt,
                     "response_raw": content, "inference_time_sec": elapsed,
-                    "error": None, "parsed_signal": signal, "sdk_used": "google.genai",
-                })
-                return signal
-            except ImportError:
-                pass
-            except Exception as e:
-                last_err = str(e)
-                logger.warning(f"google.genai with {model_name} failed: {e}. Trying next option...")
-
-            # 2. Try legacy google.generativeai SDK
-            try:
-                import google.generativeai as genai
-                import warnings
-                warnings.filterwarnings("ignore")
-                genai.configure(api_key=key)
-                model = genai.GenerativeModel(
-                    model_name,
-                    generation_config=genai.GenerationConfig(
-                        temperature=0.2,
-                        response_mime_type="application/json",
-                        max_output_tokens=1024,
-                    ),
-                    system_instruction=(
-                        "You are an expert Indian F&O options trader. "
-                        "Always respond with valid JSON only — no markdown, no extra text."
-                    ),
-                )
-                start = time.time()
-                response = model.generate_content(prompt)
-                elapsed = round(time.time() - start, 2)
-                content = response.text.strip()
-                logger.info(f"Gemini ({model_name} via legacy) response in {elapsed:.1f}s: {content[:80]}...")
-                signal = _parse_response(content, analysis)
-                signal["llm_model"] = model_name
-                signal["llm_inference_time"] = elapsed
-                _signal_cache[cache_key] = {"signal": signal, "time": time.time()}
-                _log_call({
-                    "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
-                    "model": model_name, "status": "SUCCESS", "prompt": prompt,
-                    "response_raw": content, "inference_time_sec": elapsed,
-                    "error": None, "parsed_signal": signal, "sdk_used": "google.generativeai",
+                    "error": None, "parsed_signal": signal, "sdk_used": sdk_used,
                 })
                 return signal
             except Exception as e:
                 last_err = str(e)
-                logger.warning(f"Legacy SDK with {model_name} failed: {e}")
+                logger.warning(f"Gemini call with {model_name} failed: {e}. Trying next option...")
 
         # All models exhausted — set 60s cooldown to protect quota
         _last_error = last_err
@@ -390,13 +350,118 @@ def get_signal(analysis: dict) -> dict:
             "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
             "model": config.GEMINI_MODEL, "status": "ERROR", "prompt": prompt,
             "response_raw": None, "inference_time_sec": 0,
-            "error": f"Quota/API Rate Limited — Falling back to rule-based analysis ({last_err})",
+            "error": f"API Error — Falling back to rule-based analysis ({last_err})",
             "parsed_signal": None, "sdk_used": "failed_all",
         })
         return _rule_based_signal(analysis)
 
     finally:
         call_lock.release()
+
+
+def _call_gemini_model(
+    model_name: str,
+    key: str,
+    prompt: str,
+    system_instruction: str | None = None,
+    json_mode: bool = True,
+) -> tuple[str, str]:
+    """
+    Executes a prompt against a specific Gemini model using a 3-tier strategy:
+      1. Direct REST API (fastest, guaranteed compatibility with gemini-3.8-flash, zero SDK version constraints)
+      2. google.genai SDK
+      3. google.generativeai legacy SDK
+    Returns (raw_text, sdk_used).
+    """
+    errors = []
+
+    # 1. Direct REST API (guaranteed to work across all environments including Render free host)
+    try:
+        import requests
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 2048,
+            },
+        }
+        if json_mode:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+        if system_instruction:
+            payload["systemInstruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
+
+        timeout_sec = getattr(config, "GEMINI_TIMEOUT", 30)
+        resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=timeout_sec)
+        if resp.status_code == 200:
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts and "text" in parts[0]:
+                    return parts[0]["text"].strip(), "google.rest"
+
+        # Try to extract clean error message
+        err_msg = ""
+        try:
+            err_data = resp.json()
+            err_msg = err_data.get("error", {}).get("message", resp.text[:200])
+        except Exception:
+            err_msg = resp.text[:200]
+        # If server returned an HTTP error code (e.g. 503 high demand, 404 expired, 429 rate limit),
+        # trying SDKs on the exact same model will hit the same server error. Raise immediately!
+        raise RuntimeError(f"HTTP {resp.status_code}: {err_msg}")
+    except requests.exceptions.RequestException as e:
+        errors.append(f"REST connection: {e}")
+    except Exception as e:
+        # Re-raise server HTTP errors directly so candidate loop can advance to next fallback model
+        raise e
+
+    # 2. google.genai SDK (used if REST connection/import had issue)
+    try:
+        from google import genai as gai
+        client = gai.Client(api_key=key)
+        gen_config = {"max_output_tokens": 2048}
+        if json_mode:
+            gen_config["response_mime_type"] = "application/json"
+        if system_instruction:
+            gen_config["system_instruction"] = system_instruction
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=gai.types.GenerateContentConfig(**gen_config),
+        )
+        if hasattr(response, "text") and response.text:
+            return response.text.strip(), "google.genai"
+    except ImportError:
+        pass
+    except Exception as e:
+        errors.append(f"google.genai: {e}")
+
+    # 3. google.generativeai legacy SDK
+    try:
+        import google.generativeai as genai
+        import warnings
+        warnings.filterwarnings("ignore")
+        genai.configure(api_key=key)
+        gen_kwargs = {"max_output_tokens": 2048}
+        if json_mode:
+            gen_kwargs["response_mime_type"] = "application/json"
+        model = genai.GenerativeModel(
+            model_name,
+            generation_config=genai.GenerationConfig(**gen_kwargs),
+            system_instruction=system_instruction,
+        )
+        response = model.generate_content(prompt)
+        if hasattr(response, "text") and response.text:
+            return response.text.strip(), "google.generativeai"
+    except ImportError:
+        pass
+    except Exception as e:
+        errors.append(f"google.generativeai: {e}")
+
+    raise RuntimeError(" | ".join(errors) if errors else f"All methods failed for {model_name}")
 
 
 def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> dict:
@@ -432,27 +497,25 @@ def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> 
     )
 
     candidate_models = [config.GEMINI_MODEL] + [
-        m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-2.0-flash", "gemini-1.5-flash"])
+        m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])
         if m != config.GEMINI_MODEL
     ]
 
     last_err = None
     for model_name in candidate_models:
-        # 1. Try google.genai
         try:
-            from google import genai as gai
-            client = gai.Client(api_key=key)
             start = time.time()
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=gai.types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=1024,
+            content, sdk_used = _call_gemini_model(
+                model_name=model_name,
+                key=key,
+                prompt=prompt,
+                system_instruction=(
+                    "You are an expert Indian stock market options trading assistant. "
+                    "Always respond in valid JSON format."
                 ),
+                json_mode=True,
             )
             elapsed = round(time.time() - start, 2)
-            content = response.text.strip()
             entry = {
                 "id": _next_log_id(),
                 "timestamp": ist_time,
@@ -464,41 +527,13 @@ def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> 
                 "inference_time_sec": elapsed,
                 "error": None,
                 "parsed_signal": None,
-                "sdk_used": "google.genai",
+                "sdk_used": sdk_used,
             }
             _log_call(entry)
-            return {"status": "ok", "message": f"Test call successful via google.genai ({model_name})", "entry": entry}
-        except Exception as e1:
-            last_err = str(e1)
-            logger.warning(f"Test call with google.genai ({model_name}) failed: {e1}. Trying legacy SDK...")
-
-        # 2. Try google.generativeai
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=key)
-            model = genai.GenerativeModel(model_name)
-            start = time.time()
-            response = model.generate_content(prompt)
-            elapsed = round(time.time() - start, 2)
-            content = response.text.strip()
-            entry = {
-                "id": _next_log_id(),
-                "timestamp": ist_time,
-                "symbol": symbol,
-                "model": model_name,
-                "status": "SUCCESS",
-                "prompt": prompt,
-                "response_raw": content,
-                "inference_time_sec": elapsed,
-                "error": None,
-                "parsed_signal": None,
-                "sdk_used": "google.generativeai",
-            }
-            _log_call(entry)
-            return {"status": "ok", "message": f"Test call successful via google.generativeai ({model_name})", "entry": entry}
-        except Exception as e2:
-            last_err = str(e2)
-            logger.warning(f"Test call with google.generativeai ({model_name}) failed: {e2}")
+            return {"status": "ok", "message": f"Test call successful via {sdk_used} ({model_name})", "entry": entry}
+        except Exception as e:
+            last_err = str(e)
+            logger.warning(f"Test call with {model_name} failed: {e}. Trying next option...")
 
     entry = {
         "id": _next_log_id(),
@@ -522,8 +557,15 @@ import re
 
 def _parse_response(content: str, analysis: dict) -> dict:
     match = re.search(r"\{.*\}", content, re.DOTALL)
-    if match:
-        raw_json = match.group(0)
+    raw_json = match.group(0) if match else None
+    if not raw_json and "{" in content:
+        start_idx = content.find("{")
+        snippet = content[start_idx:].strip()
+        if snippet.count('"') % 2 != 0:
+            snippet += '"'
+        raw_json = snippet + "\n}"
+
+    if raw_json:
         result = None
         # 1. Standard json loads with strict=False
         try:

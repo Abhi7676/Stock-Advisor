@@ -90,8 +90,28 @@ ENTRY_THRESHOLD = 3         # Minimum composite bias score (3 = balanced: signal
 # Get your free API key from: https://aistudio.google.com/app/apikey
 # Standard production models have 1,500 requests/day & 15 req/min on free tier
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")    # Active Gemini model
-GEMINI_FALLBACK_MODELS = ["gemini-1.5-flash", "gemini-2.0-flash-exp"]
+
+def _normalize_gemini_model(model_name: str | None) -> str:
+    """Normalize model string to ensure valid, active Gemini model ID."""
+    if not model_name:
+        return "gemini-3.8-flash"
+    m = model_name.strip()
+    m_clean = m.lower().replace(" ", "-").replace("_", "-")
+    # Upgrade user variations e.g. "gemini 3.8flash", "3.8-flash", "gemini-3.8flash"
+    if any(k in m_clean for k in ("3.8flash", "3.8-flash", "3.8")):
+        return "gemini-3.8-flash"
+    if any(k in m_clean for k in ("3.6flash", "3.6-flash", "3.6")):
+        return "gemini-3.6-flash"
+    if any(k in m_clean for k in ("3.5flash", "3.5-flash", "3.5")):
+        return "gemini-3.5-flash"
+    # Auto-upgrade expired/sunset models (e.g. 1.5-flash, 2.0-flash-exp, 2.0-flash)
+    if any(k in m_clean for k in ("1.5-flash", "2.0-flash", "2.0-flash-exp")):
+        return "gemini-3.8-flash"
+    return m
+
+_raw_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = _normalize_gemini_model(_raw_model)
+GEMINI_FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
 GEMINI_TIMEOUT = 30   # seconds
 
 # ─── Execution Costs / Slippage (for backtesting realism) ────

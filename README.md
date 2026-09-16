@@ -7,7 +7,7 @@ A **100% free, real-time AI Options Trading Signal Advisor** for Nifty 50 & Bank
 ## ✨ Key Features
 
 - 📡 **Live NSE Data**: Fetches real-time index LTP, options chain OI, Put-Call Ratio, and Max Pain directly from NSE's public API
-- 🤖 **Google Gemini AI** (free tier, 1,500 req/day): Generates intelligent CALL/PUT signals by analyzing all factors together
+- 🤖 **Google Gemini 3.8 Flash AI** (free tier, 1,500 req/day): Generates intelligent CALL/PUT signals by analyzing all factors together
 - 📊 **Multi-Factor Analysis**:
   - **PCR (Put-Call Ratio)** — Bullish >1.2 | Bearish <0.8
   - **Max Pain** — Where option sellers want expiry
