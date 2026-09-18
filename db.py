@@ -53,12 +53,21 @@ class Connection:
     def execute(self, query: str, params=()):
         if self._pg:
             cur = self._conn.cursor()
-            cur.execute(query.replace("?", "%s"), params)
+            try:
+                cur.execute(query.replace("?", "%s"), params)
+            except Exception:
+                # PostgreSQL marks the whole transaction as aborted on any error.
+                # Rollback immediately so the connection is reusable.
+                self._conn.rollback()
+                raise
             return _Cursor(cur)
         return self._conn.execute(query, params)
 
     def commit(self):
         self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
 
     def close(self):
         self._conn.close()

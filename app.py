@@ -78,20 +78,30 @@ def _background_refresh():
 
 def _init_db():
     conn = db.connect()
+    # Step 1: Create table and commit immediately — so subsequent rollbacks
+    # (from failed ALTER TABLE on existing columns) don't undo the creation.
     conn.execute(db.create_table_ddl())
-    # Add columns if migrating existing DB schema
+    conn.commit()
+
+    # Step 2: Schema migration — add new columns if they don't exist yet.
+    # Uses IF NOT EXISTS (PostgreSQL 9.6+, SQLite 3.37+) to avoid errors.
+    # Each column is committed independently so one failure can't abort the rest.
     for col, col_type in [
         ("exit_premium", "REAL"), ("pnl_pct", "REAL"), ("pnl_amount", "REAL"),
         ("status", "TEXT DEFAULT 'ACTIVE'"), ("closed_at", "TEXT")
     ]:
         try:
-            conn.execute(f"ALTER TABLE signal_history ADD COLUMN {col} {col_type}")
+            conn.execute(f"ALTER TABLE signal_history ADD COLUMN IF NOT EXISTS {col} {col_type}")
+            conn.commit()
         except Exception:
-            pass
+            conn.rollback()
 
-    # Clean up old WAIT rows so history only contains actual trade recommendations
-    conn.execute("DELETE FROM signal_history WHERE signal = 'WAIT'")
-    conn.commit()
+    # Step 3: Clean up old WAIT rows so history only contains actual trade recommendations
+    try:
+        conn.execute("DELETE FROM signal_history WHERE signal = 'WAIT'")
+        conn.commit()
+    except Exception:
+        conn.rollback()
     conn.close()
 
 
