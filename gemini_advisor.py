@@ -700,9 +700,11 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
 def _is_good_trading_window() -> tuple:
     """
     Returns (is_allowed, reason_str) based on IST time-of-day.
-    LIVE WINDOW: 9:30 AM – 3:20 PM (full trading day).
-      • Skips the volatile 9:15–9:30 open (wide spreads, IV spike).
-      • Stops 10 minutes before 3:30 PM close to avoid last-minute whipsaws.
+    TWO ACTIVE WINDOWS:
+      • Morning  : 9:30 AM – 11:45 AM (institutional momentum, tight spreads)
+      • Afternoon: 2:00 PM – 3:20 PM  (resumption window, pre-close moves)
+    Midday 11:45 AM – 2:00 PM is skipped (low volume, lunch chop).
+    Stops 10 min before 3:30 PM to avoid end-of-day whipsaws.
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -710,15 +712,23 @@ def _is_good_trading_window() -> tuple:
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
-    open_mins  = 9 * 60 + 30   # 9:30 AM
-    close_mins = 15 * 60 + 20  # 3:20 PM (10-min buffer before market close)
+    morning_open  = 9 * 60 + 30   # 9:30 AM
+    morning_close = 11 * 60 + 45  # 11:45 AM
+    afternoon_open  = 14 * 60     # 2:00 PM
+    afternoon_close = 15 * 60 + 20  # 3:20 PM (10-min buffer before market close)
 
-    if mins < open_mins:
-        wait = open_mins - mins
-        return False, f"Window opens at 9:30 AM IST ({wait} min away) — spreads stabilise after open"
-    if mins <= close_mins:
-        remaining = close_mins - mins
-        return True, f"Trading window active 9:30 AM–3:20 PM ({remaining} min remaining)"
+    if mins < morning_open:
+        wait = morning_open - mins
+        return False, f"Morning window opens at 9:30 AM IST ({wait} min away)"
+    if mins <= morning_close:
+        remaining = morning_close - mins
+        return True, f"Morning window active 9:30–11:45 AM ({remaining} min remaining)"
+    if mins < afternoon_open:
+        wait = afternoon_open - mins
+        return False, f"Midday break — afternoon window opens at 2:00 PM IST ({wait} min away)"
+    if mins <= afternoon_close:
+        remaining = afternoon_close - mins
+        return True, f"Afternoon window active 2:00–3:20 PM ({remaining} min remaining)"
     return False, "Market closing (3:20 PM+) — no new entries in last 10 min before close"
 
 
