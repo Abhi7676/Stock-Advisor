@@ -8,7 +8,10 @@ from datetime import time
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "signals.sqlite")
+# DB_PATH env var lets Render (or any host) point to a persistent disk.
+# On Render: set DB_PATH=/data/signals.sqlite (with 1GB persistent disk mounted at /data)
+# Locally: falls back to signals.sqlite next to this file.
+DB_FILE = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "signals.sqlite"))
 
 # Load environment variables from .env file
 load_dotenv(os.path.join(BASE_DIR, ".env"))

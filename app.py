@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timedelta
 from functools import lru_cache
 
-from flask import Flask, jsonify, redirect, request, send_from_directory, session, url_for
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 import config
@@ -106,7 +106,8 @@ def _init_db():
 
 
 def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
-    """Tracks active trade signals (BUY_CALL / BUY_PUT), updates live PnL, and auto-closes trades after 30 mins."""
+    """Tracks active trade signals (BUY_CALL / BUY_PUT), updates live PnL.
+    Closes trades on: 13% profit target, stop-loss hit, or target_premium hit."""
     sig_name = signal.get("signal")
     try:
         conn = sqlite3.connect(config.DB_FILE)
@@ -129,20 +130,6 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
             target_p = row["target_premium"] or (entry_p * 1.3)
             sl_p = row["sl_premium"] or (entry_p * 0.6)
             created_str = row["created_at"]
-
-            # Calculate elapsed time in minutes for 1hr exit tracking
-            mins_elapsed = 0.0
-            if created_str:
-                try:
-                    c_dt = datetime.fromisoformat(created_str)
-                    now_dt = datetime.now()
-                    if c_dt.tzinfo is not None and now_dt.tzinfo is None:
-                        c_dt = c_dt.replace(tzinfo=None)
-                    elif c_dt.tzinfo is None and now_dt.tzinfo is not None:
-                        now_dt = now_dt.replace(tzinfo=None)
-                    mins_elapsed = max(0.0, (now_dt - c_dt).total_seconds() / 60.0)
-                except Exception:
-                    mins_elapsed = 0.0
 
             # Calculate current option LTP from live NSE option chain
             curr_p = None
@@ -192,13 +179,6 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 else:
                     new_status = f"STOP LOSS HIT ({pnl_pct}%) 🛑"
                 closed_at = now_iso
-            elif mins_elapsed >= 30.0:
-                # Auto-close after 30 minutes — assess "hold for 30min" result
-                outcome = "PROFIT" if pnl_pct > 0 else "LOSS"
-                emoji = "🎉" if pnl_pct > 0 else "🛑"
-                new_status = f"30MIN EXIT — {outcome} {'+' if pnl_pct >= 0 else ''}{pnl_pct}% {emoji}"
-                closed_at = now_iso
-                is_win = pnl_pct > 0
 
             # Track consecutive wins/losses for capital protection
             if closed_at:
@@ -252,41 +232,7 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
         logger.warning(f"Trade log tracking failed: {e}")
 
 
-# ─── Auth Helper ─────────────────────────────────────────────────────────────
-
-def _is_authed() -> bool:
-    """True if the current request has a valid session OR the client-side flag is set."""
-    return session.get("authed") is True
-
-
 # ─── REST API Routes ──────────────────────────────────────────────────────────
-
-@app.route("/login", methods=["GET"])
-def route_login():
-    """Serves the login page."""
-    if _is_authed():
-        return redirect(url_for("index"))
-    return send_from_directory(".", "login.html")
-
-
-@app.route("/api/auth/login", methods=["POST"])
-def api_auth_login():
-    """Validates credentials and sets a server-side session."""
-    data = request.get_json(silent=True) or {}
-    username = data.get("username", "").strip()
-    password = data.get("password", "")
-    if username == "Abhishek" and password == "trade100":
-        session["authed"] = True
-        session.permanent = data.get("remember", False)
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "message": "Invalid credentials"}), 401
-
-
-@app.route("/logout")
-def route_logout():
-    """Clears the session and redirects to login."""
-    session.clear()
-    return redirect(url_for("route_login"))
 
 
 @app.route("/")
@@ -403,60 +349,46 @@ def api_market_pulse():
 
 @app.route("/api/signal-history", methods=["GET"])
 def api_signal_history():
-    """Returns recent trade signals — one per 30-min window, each with its 30min / 13%-cap outcome."""
+    """Returns recent trade signals with their outcome (13% profit target / SL / active)."""
     limit = int(request.args.get("limit", 20))
     try:
         conn = sqlite3.connect(config.DB_FILE)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        # Fetch all non-WAIT rows, newest first
+        # Fetch all trade signals, newest first
         rows = cursor.execute(
             "SELECT * FROM signal_history WHERE signal IN ('BUY_CALL','BUY_PUT') ORDER BY id DESC LIMIT 200"
         ).fetchall()
         conn.close()
 
-        # Deduplicate: keep only 1 signal per 30-minute window per symbol
-        seen_hour_buckets = {}
-        deduped = []
+        result = []
         for r in rows:
-            created = r["created_at"] or ""
-            try:
-                dt = datetime.fromisoformat(created)
-                # Bucket key = symbol + YYYY-MM-DD HH + half-hour slot (30-min bucket)
-                half = "00" if dt.minute < 30 else "30"
-                bucket = f"{r['symbol']}_{dt.strftime('%Y-%m-%d_%H')}_{half}"
-            except Exception:
-                bucket = f"{r['symbol']}_{r['id']}"
+            row_dict = dict(r)
 
-            if bucket not in seen_hour_buckets:
-                seen_hour_buckets[bucket] = True
-                row_dict = dict(r)
+            # Build a clear human-readable outcome for the UI
+            status = row_dict.get("status", "ACTIVE")
+            pnl = row_dict.get("pnl_pct") or 0
+            entry_p = row_dict.get("entry_premium") or 0
+            exit_p = row_dict.get("exit_premium") or 0
 
-                # Build a clear human-readable outcome for the UI
-                status = row_dict.get("status", "ACTIVE")
-                pnl = row_dict.get("pnl_pct") or 0
-                entry_p = row_dict.get("entry_premium") or 0
-                exit_p = row_dict.get("exit_premium") or 0
+            if "ACTIVE" in status:
+                row_dict["outcome"] = "⏳ ACTIVE"
+                row_dict["outcome_class"] = "active"
+            elif pnl > 0:
+                row_dict["outcome"] = f"✅ PROFIT +{pnl:.1f}%  (Entry ₹{entry_p} → Exit ₹{exit_p:.1f})"
+                row_dict["outcome_class"] = "profit"
+            elif pnl < 0:
+                row_dict["outcome"] = f"❌ LOSS {pnl:.1f}%  (Entry ₹{entry_p} → Exit ₹{exit_p:.1f})"
+                row_dict["outcome_class"] = "loss"
+            else:
+                row_dict["outcome"] = f"➖ BREAKEVEN {pnl:.1f}%"
+                row_dict["outcome_class"] = "neutral"
 
-                if "ACTIVE" in status:
-                    row_dict["outcome"] = "⏳ ACTIVE"
-                    row_dict["outcome_class"] = "active"
-                elif pnl > 0:
-                    row_dict["outcome"] = f"✅ PROFIT +{pnl:.1f}%  (Entry ₹{entry_p} → Exit ₹{exit_p:.1f})"
-                    row_dict["outcome_class"] = "profit"
-                elif pnl < 0:
-                    row_dict["outcome"] = f"❌ LOSS {pnl:.1f}%  (Entry ₹{entry_p} → Exit ₹{exit_p:.1f})"
-                    row_dict["outcome_class"] = "loss"
-                else:
-                    row_dict["outcome"] = f"➖ BREAKEVEN {pnl:.1f}%"
-                    row_dict["outcome_class"] = "neutral"
-
-                deduped.append(row_dict)
-
-            if len(deduped) >= limit:
+            result.append(row_dict)
+            if len(result) >= limit:
                 break
 
-        return jsonify({"status": "ok", "count": len(deduped), "data": deduped})
+        return jsonify({"status": "ok", "count": len(result), "data": result})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

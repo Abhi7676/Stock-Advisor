@@ -9,16 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <script>
-    // ── Auth Guard: redirect to /login if not authenticated ──
-    // Only run guard if NOT already on /login to prevent loops
-    (function() {
-      if (window.location.pathname === '/login') return;
-      const authed = sessionStorage.getItem('fao_authed') === '1' ||
-                     localStorage.getItem('fao_authed') === '1';
-      if (!authed) { window.location.replace('/login'); }
-    })();
-  </script>
+
 </head>
 <body>
 
