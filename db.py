@@ -53,8 +53,12 @@ class Connection:
     def execute(self, query: str, params=()):
         if self._pg:
             cur = self._conn.cursor()
+            # psycopg2 uses % as its format-string escape char.
+            # Escape any literal % in the SQL first (e.g. LIKE 'ACTIVE%' → 'ACTIVE%%'),
+            # then replace SQLite-style ? placeholders with PostgreSQL %s.
+            pg_query = query.replace("%", "%%").replace("?", "%s")
             try:
-                cur.execute(query.replace("?", "%s"), params)
+                cur.execute(pg_query, params)
             except Exception:
                 # PostgreSQL marks the whole transaction as aborted on any error.
                 # Rollback immediately so the connection is reusable.
