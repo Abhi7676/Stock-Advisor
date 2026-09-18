@@ -10,8 +10,15 @@ import os
 import db
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+
+# India Standard Time (UTC+5:30) — used for all signal timestamps
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+def _now_ist() -> str:
+    """Current time in IST as ISO string (no timezone suffix for DB compatibility)."""
+    return datetime.now(_IST).strftime("%Y-%m-%dT%H:%M:%S")
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -151,7 +158,7 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
             pnl_amt = round((curr_p - entry_p) * lot_size, 2)
 
             new_status = "ACTIVE"
-            now_iso = datetime.now().isoformat()
+            now_iso = _now_ist()
             closed_at = None
 
             # ── Trailing Stop Loss Logic ─────────────────────
@@ -222,7 +229,7 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                     signal.get("reasoning"),
                     signal.get("source"),
                     "ACTIVE",
-                    datetime.now().isoformat(),
+                    _now_ist(),
                 ))
 
         conn.commit()

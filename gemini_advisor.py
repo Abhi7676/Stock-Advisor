@@ -700,11 +700,9 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
 def _is_good_trading_window() -> tuple:
     """
     Returns (is_allowed, reason_str) based on IST time-of-day.
-    LIVE WINDOW: 9:30 AM – 11:45 AM only.
+    LIVE WINDOW: 9:30 AM – 3:20 PM (full trading day).
       • Skips the volatile 9:15–9:30 open (wide spreads, IV spike).
-      • Ends at 11:45 AM before lunch chop erodes premium.
-    This tight window preserves Gemini API quota and captures the
-    best institutional momentum of the day.
+      • Stops 10 minutes before 3:30 PM close to avoid last-minute whipsaws.
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -713,15 +711,15 @@ def _is_good_trading_window() -> tuple:
     mins = h * 60 + m
 
     open_mins  = 9 * 60 + 30   # 9:30 AM
-    close_mins = 11 * 60 + 45  # 11:45 AM
+    close_mins = 15 * 60 + 20  # 3:20 PM (10-min buffer before market close)
 
     if mins < open_mins:
         wait = open_mins - mins
         return False, f"Window opens at 9:30 AM IST ({wait} min away) — spreads stabilise after open"
     if mins <= close_mins:
         remaining = close_mins - mins
-        return True, f"Morning window active 9:30–11:45 AM ({remaining} min remaining)"
-    return False, "Morning window closed (11:45 AM+) — no new entries after 11:45"
+        return True, f"Trading window active 9:30 AM–3:20 PM ({remaining} min remaining)"
+    return False, "Market closing (3:20 PM+) — no new entries in last 10 min before close"
 
 
 # ─── Consecutive Loss Tracker ────────────────────────────────
