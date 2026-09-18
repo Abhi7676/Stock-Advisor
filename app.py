@@ -7,7 +7,7 @@ options chain data, and market analysis.
 import json
 import logging
 import os
-import sqlite3
+import db
 import threading
 import time
 from datetime import datetime, timedelta
@@ -77,18 +77,8 @@ def _background_refresh():
 # ─── Signal History DB ────────────────────────────────────────────────────────
 
 def _init_db():
-    conn = sqlite3.connect(config.DB_FILE)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS signal_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT, signal TEXT, confidence INTEGER,
-            strike INTEGER, option_type TEXT, entry_premium REAL,
-            target_premium REAL, sl_premium REAL, exit_premium REAL,
-            pnl_pct REAL, pnl_amount REAL, ltp REAL,
-            bias_score REAL, reasoning TEXT, source TEXT,
-            status TEXT DEFAULT 'ACTIVE', created_at TEXT, closed_at TEXT
-        )
-    """)
+    conn = db.connect()
+    conn.execute(db.create_table_ddl())
     # Add columns if migrating existing DB schema
     for col, col_type in [
         ("exit_premium", "REAL"), ("pnl_pct", "REAL"), ("pnl_amount", "REAL"),
@@ -110,8 +100,7 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
     Closes trades on: 13% profit target, stop-loss hit, or target_premium hit."""
     sig_name = signal.get("signal")
     try:
-        conn = sqlite3.connect(config.DB_FILE)
-        conn.row_factory = sqlite3.Row
+        conn = db.connect()
 
         # 1. Update existing ACTIVE trades for this symbol
         spot_now = analysis.get("ltp", 0)
@@ -352,11 +341,9 @@ def api_signal_history():
     """Returns recent trade signals with their outcome (13% profit target / SL / active)."""
     limit = int(request.args.get("limit", 20))
     try:
-        conn = sqlite3.connect(config.DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        conn = db.connect()
         # Fetch all trade signals, newest first
-        rows = cursor.execute(
+        rows = conn.execute(
             "SELECT * FROM signal_history WHERE signal IN ('BUY_CALL','BUY_PUT') ORDER BY id DESC LIMIT 200"
         ).fetchall()
         conn.close()
