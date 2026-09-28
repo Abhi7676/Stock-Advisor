@@ -20,6 +20,63 @@ def _now_ist() -> str:
     """Current time in IST as ISO string (no timezone suffix for DB compatibility)."""
     return datetime.now(_IST).strftime("%Y-%m-%dT%H:%M:%S")
 
+
+def _is_market_closed_ist() -> bool:
+    """
+    Returns True if current IST time is outside trading hours.
+    Trading closes strictly at 3:00 PM IST (15:00) on weekdays.
+    All open trades square off / round up at 3:00 PM IST.
+    """
+    now = datetime.now(_IST)
+    if now.weekday() >= 5:  # Weekend
+        return True
+    mins = now.hour * 60 + now.minute
+    # Trading hours: 9:15 AM (555 min) to 3:00 PM (900 min)
+    return mins < (9 * 60 + 15) or mins >= (15 * 60)
+
+
+def _auto_square_off_closed_trades(conn=None):
+    """Squares off any lingering ACTIVE trades when market is closed (past 3:00 PM IST or past days)."""
+    should_close_conn = False
+    if conn is None:
+        conn = db.connect()
+        should_close_conn = True
+    try:
+        now_dt = datetime.now(_IST)
+        now_iso = _now_ist()
+        is_closed = _is_market_closed_ist()
+        today_str = now_dt.strftime("%Y-%m-%d")
+
+        active_rows = conn.execute("""
+            SELECT * FROM signal_history WHERE status LIKE 'ACTIVE%'
+        """).fetchall()
+
+        for row in active_rows:
+            row_id = row["id"]
+            created_at = row["created_at"] or ""
+            created_date = created_at[:10]
+            # Square off if market is currently closed OR trade was entered on an earlier day
+            if is_closed or (created_date and created_date < today_str):
+                entry_p = row["entry_premium"] or 1.0
+                curr_p = row["exit_premium"] or entry_p
+                symbol = row["symbol"]
+                lot_size = config.INDICES.get(symbol, {}).get("lot_size", 50)
+                pnl_pct = round(((curr_p - entry_p) / entry_p) * 100.0, 2)
+                pnl_amt = round((curr_p - entry_p) * lot_size, 2)
+                sign = "+" if pnl_pct >= 0 else ""
+                status_str = f"⏱️ SQUARED OFF AT 3:00 PM CLOSE ({sign}{pnl_pct}%)"
+                conn.execute("""
+                    UPDATE signal_history
+                    SET exit_premium = ?, pnl_pct = ?, pnl_amount = ?, status = ?, closed_at = ?
+                    WHERE id = ?
+                """, (curr_p, pnl_pct, pnl_amt, status_str, now_iso, row_id))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Auto square-off sweep failed: {e}")
+    finally:
+        if should_close_conn:
+            conn.close()
+
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
@@ -114,7 +171,7 @@ def _init_db():
 
 def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
     """Tracks active trade signals (BUY_CALL / BUY_PUT), updates live PnL.
-    Closes trades on: 13% profit target, stop-loss hit, or target_premium hit."""
+    Closes trades on: 13% profit target hit, stop-loss hit, or auto square-off at 3:00 PM IST market close."""
     sig_name = signal.get("signal")
     try:
         conn = db.connect()
@@ -127,14 +184,16 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
             WHERE symbol = ? AND status LIKE 'ACTIVE%'
         """, (symbol,)).fetchall()
 
+        market_closed = _is_market_closed_ist()
+
         for row in active_rows:
             row_id = row["id"]
             strike = row["strike"]
             otype = row["option_type"]
             entry_p = row["entry_premium"] or 1.0
             entry_spot = row["ltp"] or spot_now
-            target_p = row["target_premium"] or (entry_p * 1.3)
-            sl_p = row["sl_premium"] or (entry_p * 0.6)
+            target_p = row["target_premium"] or round(entry_p * (1.0 + config.PROFIT_TARGET_PCT), 2)
+            sl_p = row["sl_premium"] or round(entry_p * (1.0 - config.STOP_LOSS_PCT), 2)
             created_str = row["created_at"]
 
             # Calculate current option LTP from live NSE option chain
@@ -169,22 +228,33 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 new_status = "ACTIVE (SL→BE)"  # Show trailing status in UI
 
             is_win = False
-            if pnl_pct >= 13.0:
-                # ── 13% Profit Cap — save & close trade immediately ──
-                new_status = f"✅ PROFIT TARGET HIT +{pnl_pct}% 🎯"
-                closed_at = now_iso
-                is_win = True
-            elif curr_p >= target_p:
-                new_status = f"PROFIT BOOKED ({'+' if pnl_pct >= 0 else ''}{pnl_pct}%) 🎉"
+            exit_p = curr_p
+
+            if pnl_pct >= 13.0 or (target_p > 0 and curr_p >= target_p):
+                # ── 13% Profit Target Hit — Stop & Book Profit Immediately ──
+                exit_p = target_p if target_p > 0 else round(entry_p * 1.13, 2)
+                pnl_pct = 13.0
+                pnl_amt = round((exit_p - entry_p) * lot_size, 2)
+                new_status = "✅ PROFIT TARGET HIT +13.0% 🎯"
                 closed_at = now_iso
                 is_win = True
             elif curr_p <= effective_sl:
+                # ── Stop Loss / Breakeven Exit ──
+                exit_p = curr_p
                 if effective_sl == entry_p and pnl_pct >= -0.5:
                     new_status = f"BREAKEVEN EXIT (SL trailed) {pnl_pct:+}%"
                     is_win = True  # Breakeven is not a loss
                 else:
                     new_status = f"STOP LOSS HIT ({pnl_pct}%) 🛑"
+                    is_win = False
                 closed_at = now_iso
+            elif market_closed:
+                # ── Market Close (3:00 PM IST) — Auto Square-off / Round Up ──
+                exit_p = curr_p
+                sign = "+" if pnl_pct >= 0 else ""
+                new_status = f"⏱️ SQUARED OFF AT 3:00 PM CLOSE ({sign}{pnl_pct}%)"
+                closed_at = now_iso
+                is_win = (pnl_pct >= 0)
 
             # Track consecutive wins/losses for capital protection
             if closed_at:
@@ -195,10 +265,10 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 UPDATE signal_history
                 SET exit_premium = ?, pnl_pct = ?, pnl_amount = ?, status = ?, closed_at = ?
                 WHERE id = ?
-            """, (curr_p, pnl_pct, pnl_amt, new_status, closed_at, row_id))
+            """, (exit_p, pnl_pct, pnl_amt, new_status, closed_at, row_id))
 
-        # 2. Log NEW trade if BUY_CALL or BUY_PUT and no active trade in progress
-        if sig_name in ("BUY_CALL", "BUY_PUT"):
+        # 2. Log NEW trade only during market hours (before 3:00 PM IST) if BUY_CALL/BUY_PUT and no active trade
+        if not market_closed and sig_name in ("BUY_CALL", "BUY_PUT"):
             recent_trade = conn.execute("""
                 SELECT id FROM signal_history
                 WHERE symbol = ? AND signal = ? AND status LIKE 'ACTIVE%'
@@ -359,6 +429,8 @@ def api_signal_history():
     limit = int(request.args.get("limit", 20))
     try:
         conn = db.connect()
+        # Auto square-off any lingering active trades if market is closed (past 3:00 PM IST or past days)
+        _auto_square_off_closed_trades(conn)
         # Fetch all trade signals, newest first
         rows = conn.execute(
             "SELECT * FROM signal_history WHERE signal IN ('BUY_CALL','BUY_PUT') ORDER BY id DESC LIMIT 200"

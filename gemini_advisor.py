@@ -61,7 +61,7 @@ def get_gemini_call_logs(limit: int = 50) -> list:
 
 
 def _is_market_open() -> bool:
-    """Returns True if current IST time is within NSE market hours (9:15–15:30) on a weekday."""
+    """Returns True if current IST time is within NSE trading hours (9:15–15:00) on a weekday."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
@@ -70,7 +70,7 @@ def _is_market_open() -> bool:
         return False
     h, m = now.hour, now.minute
     mins = h * 60 + m
-    return (9 * 60 + 15) <= mins <= (15 * 60 + 30)
+    return (9 * 60 + 15) <= mins < (15 * 60)
 
 
 def _market_closed_signal(analysis: dict) -> dict:
@@ -92,16 +92,16 @@ def _market_closed_signal(analysis: dict) -> dict:
         "lot_size": lot_size,
         "reasoning": (
             "MARKET CLOSED — NO TRADING:\n"
-            "• NSE market hours are 9:15 AM – 3:30 PM IST (Mon–Fri)\n"
-            "• Never enter positions outside market hours\n"
+            "• NSE trading session ends at 3:00 PM IST (Mon–Fri)\n"
+            "• All open trades are squared off at 3:00 PM IST\n"
             "• Signals will activate during next trading session"
         ),
         "key_risk": "Market is closed. Wait for next session.",
         "market_bias": "NEUTRAL",
         "trade_tip": "Review today's signals and prepare your watchlist for tomorrow.",
         "holding_time": "0 Mins — Market Closed",
-        "action_summary": "MARKET CLOSED — No trades until next session",
-        "exit_rule": "No active positions outside market hours",
+        "action_summary": "MARKET CLOSED — All positions squared off at 3:00 PM",
+        "exit_rule": "Positions close at 13% profit target or 3:00 PM IST market close",
         "symbol": symbol, "nearest_expiry": analysis.get("nearest_expiry", "N/A"),
         "atm_strike": atm, "ltp": ltp,
         "bias_score": analysis.get("bias_score", 0),
@@ -109,7 +109,7 @@ def _market_closed_signal(analysis: dict) -> dict:
         "source": "market_closed",
         "llm_model": "Market Closed",
         "llm_inference_time": 0,
-        "trading_window": "Market Closed (NSE: 9:15–15:30 IST)",
+        "trading_window": "Market Closed (Trading: 9:15–15:00 IST)",
         "consecutive_losses": 0,
     }
 
@@ -224,14 +224,13 @@ Respond ONLY with this JSON (no markdown, no extra text):
   "strike": <recommended strike as integer>,
   "option_type": "CE" or "PE" or "NONE",
   "entry_premium": <entry premium in rupees>,
-  "target_premium": <target premium for 15%+ profit>,
+  "target_premium": <target premium for 13% profit>,
   "stop_loss_premium": <stop loss premium level>,
   "estimated_cost_inr": <total cost for 1 lot>,
-  "holding_minutes": <integer: recommended minutes to hold before booking profit, e.g. 20 or 45>,
-  "reasoning": "WHY BUY CALL (or PUT / WAIT):\n• PCR: <exact PCR & interpretation>\n• OI Walls: <Support and Resistance walls>\n• Technicals: <RSI, MACD, Supertrend signals>\n• Risk/Reward: <Target +15%, SL -8%, Capital Protection>",
+  "reasoning": "WHY BUY CALL (or PUT / WAIT):\n• PCR: <exact PCR & interpretation>\n• OI Walls: <Support and Resistance walls>\n• Technicals: <RSI, MACD, Supertrend signals>\n• Risk/Reward: <Target +13%, SL -8%, Capital Protection>",
   "key_risk": "<1 sentence about the main risk>",
   "market_bias": "BULLISH" or "BEARISH" or "NEUTRAL",
-  "trade_tip": "<1 practical tip for Groww F&O — include exact time to exit>"
+  "trade_tip": "<1 practical tip for Groww F&O — target 13% profit or square off at 3:00 PM IST close>"
 }}"""
 
 
@@ -656,34 +655,24 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     tgt_pct = round(config.PROFIT_TARGET_PCT * 100)
     sl_pct = round(config.STOP_LOSS_PCT * 100)
 
-    # Determine holding minutes — use Gemini's suggestion if provided, else estimate from confidence
-    gemini_hold_mins = signal.get("holding_minutes")
-    if gemini_hold_mins and isinstance(gemini_hold_mins, (int, float)) and 5 <= int(gemini_hold_mins) <= 135:
-        hold_mins = int(gemini_hold_mins)
-    else:
-        # Rule-based estimate: stronger signal = shorter time to reach target
-        if conf >= 90:
-            hold_mins = 20
-        elif conf >= 80:
-            hold_mins = 30
-        else:
-            hold_mins = 45
-    signal["holding_minutes"] = hold_mins
+    signal["holding_minutes"] = None
 
     if sig_name == "BUY_CALL":
-        signal["holding_time"] = f"~{hold_mins} Minutes (Book at +{tgt_pct}% target)"
-        signal["action_summary"] = f"BUY {symbol} {strike} CE @ \u20b9{prem} on Groww"
-        signal["exit_rule"] = (f"Hold {hold_mins} min or until premium hits \u20b9{target_prem} (+{tgt_pct}%). "
-                               f"Exit immediately at SL \u20b9{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +8%.")
+        signal["holding_time"] = f"Until +{tgt_pct}% Target or 3:00 PM Close"
+        signal["action_summary"] = f"BUY {symbol} {strike} CE @ ₹{prem} on Groww"
+        signal["exit_rule"] = (f"Target +{tgt_pct}% profit (₹{target_prem}). "
+                               f"Auto square-off at 3:00 PM IST market close if target not reached. "
+                               f"Stop loss at ₹{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +10%.")
     elif sig_name == "BUY_PUT":
-        signal["holding_time"] = f"~{hold_mins} Minutes (Book at +{tgt_pct}% target)"
-        signal["action_summary"] = f"BUY {symbol} {strike} PE @ \u20b9{prem} on Groww"
-        signal["exit_rule"] = (f"Hold {hold_mins} min or until premium hits \u20b9{target_prem} (+{tgt_pct}%). "
-                               f"Exit immediately at SL \u20b9{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +8%.")
+        signal["holding_time"] = f"Until +{tgt_pct}% Target or 3:00 PM Close"
+        signal["action_summary"] = f"BUY {symbol} {strike} PE @ ₹{prem} on Groww"
+        signal["exit_rule"] = (f"Target +{tgt_pct}% profit (₹{target_prem}). "
+                               f"Auto square-off at 3:00 PM IST market close if target not reached. "
+                               f"Stop loss at ₹{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +10%.")
     else:
         signal["holding_minutes"] = 0
-        signal["holding_time"] = "0 Mins \u2014 Stay on Sidelines"
-        signal["action_summary"] = "HOLD CASH \u2014 Wait for 9:30\u201311:45 AM breakout"
+        signal["holding_time"] = "Stay on Sidelines"
+        signal["action_summary"] = "HOLD CASH — Wait for directional confirmation"
         signal["exit_rule"] = "Do not enter position while market is consolidating"
 
     signal["lot_size"] = lot_size
@@ -702,9 +691,9 @@ def _is_good_trading_window() -> tuple:
     Returns (is_allowed, reason_str) based on IST time-of-day.
     TWO ACTIVE WINDOWS:
       • Morning  : 9:30 AM – 11:45 AM (institutional momentum, tight spreads)
-      • Afternoon: 2:00 PM – 3:20 PM  (resumption window, pre-close moves)
+      • Afternoon: 2:00 PM – 3:00 PM  (pre-close session, auto square-off at 3:00 PM)
     Midday 11:45 AM – 2:00 PM is skipped (low volume, lunch chop).
-    Stops 10 min before 3:30 PM to avoid end-of-day whipsaws.
+    Trading stops strictly at 3:00 PM IST (all open trades square off).
     """
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -715,7 +704,7 @@ def _is_good_trading_window() -> tuple:
     morning_open  = 9 * 60 + 30   # 9:30 AM
     morning_close = 11 * 60 + 45  # 11:45 AM
     afternoon_open  = 14 * 60     # 2:00 PM
-    afternoon_close = 15 * 60 + 20  # 3:20 PM (10-min buffer before market close)
+    afternoon_close = 15 * 60     # 3:00 PM (market close / trade square off)
 
     if mins < morning_open:
         wait = morning_open - mins
@@ -726,10 +715,10 @@ def _is_good_trading_window() -> tuple:
     if mins < afternoon_open:
         wait = afternoon_open - mins
         return False, f"Midday break — afternoon window opens at 2:00 PM IST ({wait} min away)"
-    if mins <= afternoon_close:
+    if mins < afternoon_close:
         remaining = afternoon_close - mins
-        return True, f"Afternoon window active 2:00–3:20 PM ({remaining} min remaining)"
-    return False, "Market closing (3:20 PM+) — no new entries in last 10 min before close"
+        return True, f"Afternoon window active 2:00–3:00 PM ({remaining} min remaining)"
+    return False, "Market closed (3:00 PM+ IST) — all positions rounded up & squared off"
 
 
 # ─── Consecutive Loss Tracker ────────────────────────────────
@@ -781,7 +770,8 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bullish put writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
-            f"• Risk/Reward: Target +{config.PROFIT_TARGET_PCT*100:.0f}% / SL -{config.STOP_LOSS_PCT*100:.0f}% (1:2 R:R in your favor)\n"
+            f"• Risk/Reward: Target +{config.PROFIT_TARGET_PCT*100:.0f}% / SL -{config.STOP_LOSS_PCT*100:.0f}%\n"
+            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST market close\n"
             f"• Groww Strategy: Buy {atm} CE, set limit order within bid-ask spread."
         )
     elif bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked:
@@ -793,7 +783,8 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bearish call writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
-            f"• Risk/Reward: Target +{config.PROFIT_TARGET_PCT*100:.0f}% / SL -{config.STOP_LOSS_PCT*100:.0f}% (1:2 R:R in your favor)\n"
+            f"• Risk/Reward: Target +{config.PROFIT_TARGET_PCT*100:.0f}% / SL -{config.STOP_LOSS_PCT*100:.0f}%\n"
+            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST market close\n"
             f"• Groww Strategy: Buy {atm} PE, set limit order within bid-ask spread."
         )
     else:

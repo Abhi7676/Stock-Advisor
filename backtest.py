@@ -2,9 +2,8 @@
 backtest.py — Simple simulation to estimate hit-rate of signals
 
 This script uses the project's synthetic data paths to generate signals
-and simulates the next 30 minutes (5-min bars) using real/synthetic
-candles to see whether the recommended entry hits the +30% target or
-the -40% stop-loss first.
+and simulates candles to see whether the recommended entry hits the +13% target or
+the stop-loss first, or squares off at session close.
 
 Run: python backtest.py
 """

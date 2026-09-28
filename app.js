@@ -467,7 +467,7 @@ function renderHistory(rows) {
   if (!trades.length) {
     container.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-3);font-size:0.82rem">
       📊 <strong>No Trades Executed Yet</strong><br>
-      <span style="font-size:0.75rem;color:var(--text-3)">Signal History shows <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades — one per 30 min — closed at <strong>13% profit cap</strong>, SL hit, or after 30 min hold.</span>
+      <span style="font-size:0.75rem;color:var(--text-3)">Signal History shows <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades — closed at <strong>13% profit target</strong>, SL hit, or squared off at market close (3:00 PM IST).</span>
     </div>`;
     return;
   }
@@ -513,13 +513,23 @@ function renderHistory(rows) {
         <div style="font-size:0.71rem;color:var(--text-3);margin-top:2px;opacity:0.7">${statusStr}</div>
       </div>
 
-      <!-- 1-hour hold outcome pill -->
+      <!-- Trade outcome pill -->
       <div style="flex-shrink:0;text-align:right">
         <div style="background:${oc.bg};border:1px solid ${oc.border};color:${oc.text};
                     padding:5px 12px;border-radius:8px;font-size:0.78rem;font-weight:700;white-space:nowrap">
           ${outcome}
         </div>
-        <div style="font-size:0.67rem;color:var(--text-3);margin-top:3px;opacity:0.7">30min result (% P&amp;L)</div>
+        <div style="font-size:0.67rem;color:var(--text-3);margin-top:3px;opacity:0.7">${
+          row.status?.includes("ACTIVE")
+            ? "⏳ Active Position"
+            : (row.status?.includes("TARGET") || row.status?.includes("PROFIT"))
+            ? "🎯 13% Target Reached"
+            : (row.status?.includes("3:00 PM") || row.status?.includes("SQUARED OFF"))
+            ? "⏱️ 3:00 PM Close"
+            : row.status?.includes("STOP LOSS")
+            ? "🛑 Stop Loss Exit"
+            : "Trade Result (% P&amp;L)"
+        }</div>
       </div>
     </div>`;
   }).join("");

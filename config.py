@@ -76,13 +76,13 @@ PCR_THRESHOLDS = {
 
 # ─── Market Hours (IST) ────────────────────────────────────
 MARKET_OPEN = time(9, 15)
-MARKET_CLOSE = time(15, 30)
+MARKET_CLOSE = time(15, 0)     # 3:00 PM IST — trading window closes & open trades square off
 PRE_OPEN = time(9, 0)
 
 # ─── User Budget Settings ─────────────────────────────────
 USER_BUDGET_INR = 10000
 RISK_PER_TRADE_PCT = 0.5    # Max 50% of budget in one trade = ₹5000
-PROFIT_TARGET_PCT = 0.15    # Target 15% on premium — realistic in the 9:30–11:45 morning window
+PROFIT_TARGET_PCT = 0.13    # Target 13% on premium — closes trade when 13% profit is made
 STOP_LOSS_PCT = 0.08        # Stop at 8% loss on premium (tight capital protection)
 ENTRY_THRESHOLD = 3         # Minimum composite bias score (3 = balanced: signals fire regularly)
                             # 3 → fires when 3+ indicators align (PCR + OI + 1 technical)
