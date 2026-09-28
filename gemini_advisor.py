@@ -758,8 +758,8 @@ def _rule_based_signal(analysis: dict) -> dict:
     loss_blocked = consec_losses >= 2  # Pause after 2 consecutive losses
 
     # ── Gate 3: Directional Bias Threshold ────────────────
-    # Score of ±3 represents strong directional confirmation (e.g. PCR + MACD + RSI/Momentum)
-    ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLD", 3)
+    # Score of ±4 represents strong directional confirmation (e.g. PCR + MACD + RSI/Momentum)
+    ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLD", 4)
 
     if bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked:
         signal, otype, confidence = "BUY_CALL", "CE", min(99, 75 + bias_score * 6)
@@ -832,8 +832,8 @@ def _rule_based_signal(analysis: dict) -> dict:
         "reasoning": reasoning,
         "key_risk": "Market can reverse quickly — always use a stop loss. Never risk more than 50% of capital.",
         "market_bias": (
-            "BULLISH" if bias_score >= 3 else
-            "BEARISH" if bias_score <= -3 else "NEUTRAL"
+            "BULLISH" if bias_score >= ENTRY_THRESHOLD else
+            "BEARISH" if bias_score <= -ENTRY_THRESHOLD else "NEUTRAL"
         ),
         "trade_tip": (
             "Set a LIMIT order within the bid-ask spread on Groww F&O. "
