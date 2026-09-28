@@ -661,14 +661,12 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
         signal["holding_time"] = f"Until +{tgt_pct}% Target or 3:00 PM Close"
         signal["action_summary"] = f"BUY {symbol} {strike} CE @ ₹{prem} on Groww"
         signal["exit_rule"] = (f"Target +{tgt_pct}% profit (₹{target_prem}). "
-                               f"Auto square-off at 3:00 PM IST market close if target not reached. "
-                               f"Stop loss at ₹{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +10%.")
+                               f"No stop loss exit — auto square-off at 3:00 PM IST close.")
     elif sig_name == "BUY_PUT":
         signal["holding_time"] = f"Until +{tgt_pct}% Target or 3:00 PM Close"
         signal["action_summary"] = f"BUY {symbol} {strike} PE @ ₹{prem} on Groww"
         signal["exit_rule"] = (f"Target +{tgt_pct}% profit (₹{target_prem}). "
-                               f"Auto square-off at 3:00 PM IST market close if target not reached. "
-                               f"Stop loss at ₹{sl_prem} (-{sl_pct}%). Trail SL to breakeven at +10%.")
+                               f"No stop loss exit — auto square-off at 3:00 PM IST close.")
     else:
         signal["holding_minutes"] = 0
         signal["holding_time"] = "Stay on Sidelines"
@@ -770,8 +768,8 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bullish put writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
-            f"• Risk/Reward: Target +{config.PROFIT_TARGET_PCT*100:.0f}% / SL -{config.STOP_LOSS_PCT*100:.0f}%\n"
-            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST market close\n"
+            f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
+            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST close (no stop loss exit)\n"
             f"• Groww Strategy: Buy {atm} CE, set limit order within bid-ask spread."
         )
     elif bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked:
@@ -783,8 +781,8 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bearish call writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
-            f"• Risk/Reward: Target +{config.PROFIT_TARGET_PCT*100:.0f}% / SL -{config.STOP_LOSS_PCT*100:.0f}%\n"
-            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST market close\n"
+            f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
+            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST close (no stop loss exit)\n"
             f"• Groww Strategy: Buy {atm} PE, set limit order within bid-ask spread."
         )
     else:

@@ -171,7 +171,7 @@ def _init_db():
 
 def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
     """Tracks active trade signals (BUY_CALL / BUY_PUT), updates live PnL.
-    Closes trades on: 13% profit target hit, stop-loss hit, or auto square-off at 3:00 PM IST market close."""
+    Closes trades on: 13% profit target hit, or auto square-off at 3:00 PM IST close (no stop loss exit)."""
     sig_name = signal.get("signal")
     try:
         conn = db.connect()
@@ -220,13 +220,6 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
             now_iso = _now_ist()
             closed_at = None
 
-            # ── Trailing Stop Loss Logic ─────────────────────
-            # Once trade reaches +10% profit, trail SL to breakeven (entry price)
-            effective_sl = sl_p
-            if pnl_pct >= 10.0:
-                effective_sl = entry_p  # Move SL to breakeven
-                new_status = "ACTIVE (SL→BE)"  # Show trailing status in UI
-
             is_win = False
             exit_p = curr_p
 
@@ -238,18 +231,8 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 new_status = "✅ PROFIT TARGET HIT +13.0% 🎯"
                 closed_at = now_iso
                 is_win = True
-            elif curr_p <= effective_sl:
-                # ── Stop Loss / Breakeven Exit ──
-                exit_p = curr_p
-                if effective_sl == entry_p and pnl_pct >= -0.5:
-                    new_status = f"BREAKEVEN EXIT (SL trailed) {pnl_pct:+}%"
-                    is_win = True  # Breakeven is not a loss
-                else:
-                    new_status = f"STOP LOSS HIT ({pnl_pct}%) 🛑"
-                    is_win = False
-                closed_at = now_iso
             elif market_closed:
-                # ── Market Close (3:00 PM IST) — Auto Square-off / Round Up ──
+                # ── Market Close (3:00 PM IST) — Auto Square-off (No Stop Loss Exit) ──
                 exit_p = curr_p
                 sign = "+" if pnl_pct >= 0 else ""
                 new_status = f"⏱️ SQUARED OFF AT 3:00 PM CLOSE ({sign}{pnl_pct}%)"
