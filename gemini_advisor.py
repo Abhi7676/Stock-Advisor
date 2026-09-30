@@ -746,7 +746,10 @@ def _rule_based_signal(analysis: dict) -> dict:
     budget_advice = analysis.get("budget_advice", {})
     expiry = analysis.get("nearest_expiry", "N/A")
     ta = analysis.get("ta", {})
+    ta_15m = analysis.get("ta_15m", {})
     oi = analysis.get("oi_analysis", {})
+    india_vix = analysis.get("india_vix", 15.0)
+    max_pain_dist_pct = analysis.get("max_pain_dist_pct", 999.0)
 
     # ── Gate 1: Trading Window Filter ──────────────────────
     window_ok, window_reason = _is_good_trading_window()
@@ -759,7 +762,7 @@ def _rule_based_signal(analysis: dict) -> dict:
     # Score of ±4 represents strong directional confirmation (e.g. PCR + MACD + RSI/Momentum)
     ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLD", 4)
 
-    # ── Gate 4: Trend Confirmation (Supertrend OR MACD must agree) ──
+    # ── Gate 4: 5-min Trend Confirmation (Supertrend OR MACD must agree) ──
     # Prevents entries when bias is met via PCR+OI+price alone while
     # technicals remain sideways — a key cause of false-signal losses.
     st_signal  = ta.get("supertrend_signal", "NEUTRAL")
@@ -767,12 +770,55 @@ def _rule_based_signal(analysis: dict) -> dict:
     trend_ok_bull = (st_signal == "BUY") or (macd_bias == "BULLISH")
     trend_ok_bear = (st_signal == "SELL") or (macd_bias == "BEARISH")
 
-    if bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked and trend_ok_bull:
+    # ── Gate 5: India VIX Filter ───────────────────────────
+    # VIX > 18 → options premiums are extremely expensive (high IV)
+    # and markets whipsaw violently — skip to protect capital.
+    # VIX < 12 → market is too complacent / likely to stay flat.
+    VIX_MAX = 18.0
+    VIX_MIN = 11.0
+    vix_ok = VIX_MIN <= india_vix <= VIX_MAX
+    vix_reason = (
+        f"India VIX={india_vix:.1f} too HIGH (>{VIX_MAX}) — extreme volatility, options too risky"
+        if india_vix > VIX_MAX else
+        f"India VIX={india_vix:.1f} too LOW (<{VIX_MIN}) — market too flat for momentum trades"
+        if india_vix < VIX_MIN else
+        f"India VIX={india_vix:.1f} ✅ (safe trading range {VIX_MIN}–{VIX_MAX})"
+    )
+
+    # ── Gate 6: Max Pain Pinning Filter ────────────────────
+    # When spot is within 0.35% of max pain, market makers actively
+    # defend that level and directional moves stall → skip.
+    MAX_PAIN_MIN_DIST_PCT = 0.35
+    max_pain_ok = max_pain_dist_pct >= MAX_PAIN_MIN_DIST_PCT
+    max_pain_reason = (
+        f"Spot too close to Max Pain ({analysis.get('max_pain',0)}) — "
+        f"only {max_pain_dist_pct:.2f}% away (need >{MAX_PAIN_MIN_DIST_PCT}%), "
+        f"market makers will pin price here"
+        if not max_pain_ok else
+        f"Max Pain distance {max_pain_dist_pct:.2f}% ✅ (safe)"
+    )
+
+    # ── Gate 7: 15-min Trend Confirmation ──────────────────
+    # The 5-min trend can be bullish while the 15-min is still bearish.
+    # Require 15-min Supertrend OR 15-min MACD to also agree.
+    st_15m   = ta_15m.get("supertrend_signal", "NEUTRAL")
+    macd_15m = ta_15m.get("macd_bias", "NEUTRAL")
+    trend_15m_bull = (st_15m == "BUY") or (macd_15m == "BULLISH")
+    trend_15m_bear = (st_15m == "SELL") or (macd_15m == "BEARISH")
+    trend_15m_reason_bull = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
+    trend_15m_reason_bear = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
+
+    # All gates must pass for a BUY signal
+    if (bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked
+            and trend_ok_bull and vix_ok and max_pain_ok and trend_15m_bull):
         signal, otype, confidence = "BUY_CALL", "CE", min(99, 75 + bias_score * 6)
         reasoning = (
-            f"WHY BUY CALL (CE) — STRONG CONFIRMATION:\n"
+            f"WHY BUY CALL (CE) — ALL 7 GATES PASSED:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≥{ENTRY_THRESHOLD} met)\n"
-            f"• Trend Confirmed: Supertrend={st_signal}, MACD={macd_bias} ✅\n"
+            f"• 5-min Trend ✅: Supertrend={st_signal}, MACD={macd_bias}\n"
+            f"• 15-min Trend ✅: {trend_15m_reason_bull}\n"
+            f"• {vix_reason}\n"
+            f"• {max_pain_reason}\n"
             f"• Trading Window: ✅ {window_reason}\n"
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bullish put writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
@@ -781,12 +827,16 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Exit Rule: 13% profit target, ₹1300 stop loss, or auto square-off at 3:00 PM IST close\n"
             f"• Groww Strategy: Buy {atm} CE, set limit order within bid-ask spread."
         )
-    elif bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked and trend_ok_bear:
+    elif (bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked
+            and trend_ok_bear and vix_ok and max_pain_ok and trend_15m_bear):
         signal, otype, confidence = "BUY_PUT", "PE", min(99, 75 + abs(bias_score) * 6)
         reasoning = (
-            f"WHY BUY PUT (PE) — STRONG CONFIRMATION:\n"
+            f"WHY BUY PUT (PE) — ALL 7 GATES PASSED:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≤-{ENTRY_THRESHOLD} met)\n"
-            f"• Trend Confirmed: Supertrend={st_signal}, MACD={macd_bias} ✅\n"
+            f"• 5-min Trend ✅: Supertrend={st_signal}, MACD={macd_bias}\n"
+            f"• 15-min Trend ✅: {trend_15m_reason_bear}\n"
+            f"• {vix_reason}\n"
+            f"• {max_pain_reason}\n"
             f"• Trading Window: ✅ {window_reason}\n"
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bearish call writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
@@ -797,14 +847,22 @@ def _rule_based_signal(analysis: dict) -> dict:
         )
     else:
         signal, otype, confidence = "WAIT", "NONE", 40
-        # Build specific WAIT reason
+        # Build specific WAIT reason — list every gate that failed
         wait_reasons = []
         if abs(bias_score) < ENTRY_THRESHOLD:
             wait_reasons.append(f"Weak signal (bias {bias_score:+}, need ≥{ENTRY_THRESHOLD} or ≤-{ENTRY_THRESHOLD})")
         if bias_score >= ENTRY_THRESHOLD and not trend_ok_bull:
-            wait_reasons.append(f"Trend not confirmed for BUY CALL: Supertrend={st_signal}, MACD={macd_bias} — waiting for alignment")
+            wait_reasons.append(f"5-min trend not confirmed for BUY CALL: Supertrend={st_signal}, MACD={macd_bias}")
         if bias_score <= -ENTRY_THRESHOLD and not trend_ok_bear:
-            wait_reasons.append(f"Trend not confirmed for BUY PUT: Supertrend={st_signal}, MACD={macd_bias} — waiting for alignment")
+            wait_reasons.append(f"5-min trend not confirmed for BUY PUT: Supertrend={st_signal}, MACD={macd_bias}")
+        if bias_score >= ENTRY_THRESHOLD and trend_ok_bull and not trend_15m_bull:
+            wait_reasons.append(f"15-min trend conflict: {trend_15m_reason_bull} — waiting for higher-timeframe alignment")
+        if bias_score <= -ENTRY_THRESHOLD and trend_ok_bear and not trend_15m_bear:
+            wait_reasons.append(f"15-min trend conflict: {trend_15m_reason_bear} — waiting for higher-timeframe alignment")
+        if not vix_ok:
+            wait_reasons.append(vix_reason)
+        if not max_pain_ok:
+            wait_reasons.append(max_pain_reason)
         if not window_ok:
             wait_reasons.append(f"Bad timing: {window_reason}")
         if loss_blocked:
@@ -816,15 +874,16 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Put-Call Ratio (PCR): {pcr} — {analysis.get('pcr_signal','NEUTRAL').replace('_',' ')}\n"
             f"• OI Range: Bound between Call Wall ({oi.get('call_resistance','')}) & Put Wall ({oi.get('put_support','')})\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',50):.1f}, MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
+            f"• India VIX: {india_vix:.1f} | Max Pain Distance: {max_pain_dist_pct:.2f}%\n"
             f"• Capital Protection: Preserve ₹{config.USER_BUDGET_INR:,} budget — patience is profitable."
         )
 
-    # Detect pure midday-break WAIT to let the UI show a friendly message
+    # Detect midday-break WAIT to show a friendly message in the UI.
+    # This applies to ALL symbols regardless of bias score or loss count —
+    # if the trading window is blocked due to midday break, show the calm banner.
     is_midday_break = (
         signal == "WAIT"
         and not window_ok
-        and abs(bias_score) < ENTRY_THRESHOLD
-        and not loss_blocked
         and "Midday break" in window_reason
     )
 

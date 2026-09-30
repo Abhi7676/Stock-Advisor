@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from nse_data import get_index_candles, get_options_chain, get_index_quote
+from nse_data import get_index_candles, get_options_chain, get_index_quote, get_india_vix
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,18 @@ def analyze_index(symbol: str) -> dict:
     # ── 4. OI Buildup Analysis ─────────────────────────────
     oi_analysis = _analyze_oi_buildup(chain, atm_strike, symbol)
 
-    # ── 5. Technical Indicators ────────────────────────────
-    candles = get_index_candles(symbol)
+    # ── 5. Technical Indicators (5-min primary) ────────────
+    candles = get_index_candles(symbol, interval="5m", period="1d")
     ta_signals = _compute_ta(candles)
+
+    # ── 5b. 15-min Trend Confirmation (multi-day) ──────────
+    # Uses 5 days of 15-min candles so RSI/MACD/Supertrend have
+    # enough history to be reliable for trend direction.
+    try:
+        candles_15m = get_index_candles(symbol, interval="15m", period="5d")
+        ta_15m = _compute_ta(candles_15m)
+    except Exception:
+        ta_15m = _default_ta()
 
     # ── 6. Support & Resistance ────────────────────────────
     sr_levels = _compute_support_resistance(candles, ltp)
@@ -54,7 +63,16 @@ def analyze_index(symbol: str) -> dict:
     # ── 7. ATM Premium & Budget Analysis ──────────────────
     atm_info = _get_atm_premium(chain, atm_strike, symbol)
 
-    # ── 8. Composite Bias ─────────────────────────────────
+    # ── 8. India VIX (live volatility) ────────────────────
+    # VIX > 18 → options too expensive / high whipsaw risk → skip trading
+    india_vix = get_india_vix()
+
+    # ── 9. Max Pain Distance % ─────────────────────────────
+    # When spot is very close to max pain (<0.3%), market makers
+    # pin the price and directional moves stall → skip trading
+    max_pain_dist_pct = round(abs(ltp - max_pain) / max_pain * 100, 3) if max_pain else 999.0
+
+    # ── 10. Composite Bias ─────────────────────────────────
     bias_score, bias_factors = _compute_composite_bias(
         pcr_signal, oi_analysis, ta_signals, quote
     )
@@ -72,12 +90,17 @@ def analyze_index(symbol: str) -> dict:
         "pcr": pcr,
         "pcr_signal": pcr_signal,
         "max_pain": max_pain,
+        "max_pain_dist_pct": max_pain_dist_pct,
         "atm_strike": atm_strike,
         "total_call_oi": total_call_oi,
         "total_put_oi": total_put_oi,
         "oi_analysis": oi_analysis,
-        # Technicals
+        # Technicals (5-min intraday)
         "ta": ta_signals,
+        # Technicals (15-min multi-day trend)
+        "ta_15m": ta_15m,
+        # Volatility
+        "india_vix": india_vix,
         # Support & Resistance
         "support": sr_levels["support"],
         "resistance": sr_levels["resistance"],

@@ -83,6 +83,30 @@ class NSESession:
 _nse = NSESession()
 
 
+# ─── India VIX ────────────────────────────────────────────────────────────────
+
+def get_india_vix() -> float:
+    """
+    Returns live India VIX value from NSE allIndices API.
+    VIX > 18 = high volatility (risky for options buyers — premiums too expensive).
+    VIX < 12 = very low volatility (options cheap but flat market).
+    Returns 15.0 as a safe neutral default if fetch fails.
+    """
+    try:
+        data = _nse.get(config.NSE_ALL_INDICES_URL)
+        if data and "data" in data:
+            for item in data["data"]:
+                idx = (item.get("index") or item.get("indexName") or "").strip().upper()
+                if idx == "INDIA VIX":
+                    v = float(item.get("last") or item.get("lastPrice") or item.get("indexValue") or 0)
+                    if v > 0:
+                        logger.info(f"India VIX: {v:.2f}")
+                        return round(v, 2)
+    except Exception as e:
+        logger.warning(f"VIX fetch failed: {e}")
+    return 15.0  # safe neutral default
+
+
 # ─── Contract Info & Options Chain (v3) ───────────────────────────────────────
 
 def get_contract_info(symbol: str) -> dict | None:
