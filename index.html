@@ -44,6 +44,8 @@
         <span class="pulse amber" id="geminiDot"></span>
         <span id="geminiText">Gemini AI: Checking...</span>
       </div>
+      <a href="#perfDashboardPanel" class="btn btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;padding:6px 12px;" title="Jump to Signal Performance Dashboard">📊 <span>Performance</span></a>
+      <a href="#historyList" class="btn btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:4px;font-size:0.75rem;padding:6px 12px;" title="Jump to Signal History">📋 <span>History</span></a>
       <button id="themeToggleBtn" onclick="toggleTheme()" title="Switch theme">
         <span class="theme-icon" id="themeIcon">🌙</span>
         <span id="themeLabel">Light</span>
@@ -398,6 +400,25 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════
+         Performance Dashboard
+    ════════════════════════════════════════════ -->
+    <div class="panel" style="grid-column: 1 / -1;" id="perfDashboardPanel">
+      <div class="panel-title">
+        <div class="panel-title-left"><span>📊</span> Signal Performance Dashboard</div>
+        <span style="font-size:0.72rem;color:var(--text-3);font-weight:500;">Live from signal history • auto-updates</span>
+      </div>
+
+      <!-- Stats Row -->
+      <div id="perfStats" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;padding:12px 0 4px;">
+        <!-- filled by JS -->
+        <div style="text-align:center;padding:20px;color:var(--text-3);grid-column:1/-1">Loading performance data...</div>
+      </div>
+
+      <!-- Symbol Breakdown -->
+      <div id="perfBreakdown" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;"></div>
     </div>
 
     <!-- ════════════════════════════════════════════

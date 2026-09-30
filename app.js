@@ -165,6 +165,7 @@ async function fetchAllData(force = false) {
   ]);
 
   fetchSignalHistory();
+  fetchPerformance();
 
   // If data still not loaded (cold start), schedule a quick retry
   if (!_dataLoaded.NIFTY || !_dataLoaded.BANKNIFTY) {
@@ -462,6 +463,123 @@ function renderChain(sym, data) {
       <td class="put-td">${putBar}</td>
     </tr>`;
   }).join("");
+}
+
+// ─── Performance Dashboard ────────────────────────────────────
+async function fetchPerformance() {
+  try {
+    const r = await fetch(`${API}/api/performance`);
+    if (!r.ok) return;
+    const json = await r.json();
+    if (json.status === "ok") {
+      renderPerformance(json);
+    }
+  } catch (e) {
+    console.warn("Performance fetch failed:", e);
+  }
+}
+
+function renderPerformance(d) {
+  const statsEl = document.getElementById("perfStats");
+  const breakdownEl = document.getElementById("perfBreakdown");
+  if (!statsEl) return;
+
+  if (!d || d.total_trades === 0) {
+    statsEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--text-3);grid-column:1/-1;font-size:0.82rem">
+      📊 No trade signals recorded yet. Statistics will appear here automatically once trades execute.
+    </div>`;
+    if (breakdownEl) breakdownEl.innerHTML = "";
+    return;
+  }
+
+  const pnlColor = d.net_pnl_inr > 0 ? "var(--call)" : d.net_pnl_inr < 0 ? "var(--put)" : "var(--text-2)";
+  const winRateColor = d.win_rate >= 50 ? "var(--call)" : d.win_rate >= 40 ? "var(--wait)" : "var(--put)";
+
+  statsEl.innerHTML = `
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Win Rate</div>
+      <div class="perf-stat-val" style="color:${winRateColor}">${d.win_rate}%</div>
+      <div class="perf-stat-sub">${d.wins} Wins &nbsp;•&nbsp; ${d.losses} Losses</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Net Realized P&L</div>
+      <div class="perf-stat-val" style="color:${pnlColor}">
+        ${d.net_pnl_inr >= 0 ? "+" : ""}₹${fmt(d.net_pnl_inr)}
+      </div>
+      <div class="perf-stat-sub">${d.closed_trades} Closed Trades</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Gross Profit</div>
+      <div class="perf-stat-val" style="color:var(--call)">+₹${fmt(d.total_profit_inr)}</div>
+      <div class="perf-stat-sub">From ${d.wins} winning trades</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Gross Loss</div>
+      <div class="perf-stat-val" style="color:var(--put)">-₹${fmt(d.total_loss_inr)}</div>
+      <div class="perf-stat-sub">From ${d.losses} losing trades</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Profit Factor</div>
+      <div class="perf-stat-val" style="color:${d.profit_factor >= 1.0 ? 'var(--call)' : 'var(--put)'}">
+        ${d.profit_factor}x
+      </div>
+      <div class="perf-stat-sub">Wins ₹ / Losses ₹</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Total Signals</div>
+      <div class="perf-stat-val" style="color:var(--cyan)">${d.total_trades}</div>
+      <div class="perf-stat-sub">
+        ${d.active_trades > 0 ? `<span style="color:#38bdf8">⏳ ${d.active_trades} Active</span>` : 'All Squared Off'}
+      </div>
+    </div>
+  `;
+
+  if (breakdownEl && d.by_symbol) {
+    const nifty = d.by_symbol.NIFTY || {};
+    const bn = d.by_symbol.BANKNIFTY || {};
+
+    const niftyPnlColor = (nifty.pnl_amt || 0) >= 0 ? "var(--call)" : "var(--put)";
+    const bnPnlColor = (bn.pnl_amt || 0) >= 0 ? "var(--call)" : "var(--put)";
+
+    breakdownEl.innerHTML = `
+      <div class="perf-breakdown-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-weight:700;font-size:0.85rem;color:var(--text-1);display:flex;align-items:center;gap:6px;">
+            <span>📈</span> NIFTY 50
+          </div>
+          <div style="font-weight:700;font-size:0.85rem;color:${niftyPnlColor}">
+            ${(nifty.pnl_amt || 0) >= 0 ? "+" : ""}₹${fmt(nifty.pnl_amt || 0)}
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-3)">
+          <span>Trades: <strong style="color:var(--text-1)">${nifty.trades || 0}</strong></span>
+          <span>Win Rate: <strong style="color:${(nifty.win_rate||0)>=50 ? 'var(--call)' : 'var(--text-1)'}">${nifty.win_rate || 0}%</strong></span>
+          <span>Wins/Losses: <strong style="color:var(--text-1)">${nifty.wins || 0}W / ${nifty.losses || 0}L</strong></span>
+        </div>
+      </div>
+
+      <div class="perf-breakdown-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <div style="font-weight:700;font-size:0.85rem;color:var(--text-1);display:flex;align-items:center;gap:6px;">
+            <span>🏦</span> BANK NIFTY
+          </div>
+          <div style="font-weight:700;font-size:0.85rem;color:${bnPnlColor}">
+            ${(bn.pnl_amt || 0) >= 0 ? "+" : ""}₹${fmt(bn.pnl_amt || 0)}
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-3)">
+          <span>Trades: <strong style="color:var(--text-1)">${bn.trades || 0}</strong></span>
+          <span>Win Rate: <strong style="color:${(bn.win_rate||0)>=50 ? 'var(--call)' : 'var(--text-1)'}">${bn.win_rate || 0}%</strong></span>
+          <span>Wins/Losses: <strong style="color:var(--text-1)">${bn.wins || 0}W / ${bn.losses || 0}L</strong></span>
+        </div>
+      </div>
+    `;
+  }
 }
 
 // ─── Signal History ───────────────────────────────────────────

@@ -466,6 +466,97 @@ def api_signal_history():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/performance", methods=["GET"])
+def api_performance():
+    """Returns aggregated performance metrics from trade signal history."""
+    try:
+        conn = db.connect()
+        _auto_square_off_closed_trades(conn)
+        rows = conn.execute(
+            "SELECT * FROM signal_history WHERE signal IN ('BUY_CALL','BUY_PUT') ORDER BY id DESC"
+        ).fetchall()
+        conn.close()
+
+        total_trades = len(rows)
+        active_trades = 0
+        wins = 0
+        losses = 0
+        breakeven = 0
+        total_pnl_amt = 0.0
+        total_profit_amt = 0.0
+        total_loss_amt = 0.0
+        pnl_pcts = []
+
+        by_sym = {
+            "NIFTY": {"trades": 0, "wins": 0, "losses": 0, "pnl_amt": 0.0, "win_rate": 0.0},
+            "BANKNIFTY": {"trades": 0, "wins": 0, "losses": 0, "pnl_amt": 0.0, "win_rate": 0.0},
+        }
+
+        for r in rows:
+            sym = r["symbol"]
+            status = r["status"] or ""
+            pnl_p = r["pnl_pct"] or 0.0
+            pnl_a = r["pnl_amount"] or 0.0
+
+            if "ACTIVE" in status:
+                active_trades += 1
+                continue
+
+            if pnl_p > 0:
+                wins += 1
+                total_profit_amt += pnl_a
+                if sym in by_sym:
+                    by_sym[sym]["wins"] += 1
+            elif pnl_p < 0:
+                losses += 1
+                total_loss_amt += abs(pnl_a)
+                if sym in by_sym:
+                    by_sym[sym]["losses"] += 1
+            else:
+                breakeven += 1
+
+            total_pnl_amt += pnl_a
+            pnl_pcts.append(pnl_p)
+            if sym in by_sym:
+                by_sym[sym]["trades"] += 1
+                by_sym[sym]["pnl_amt"] += pnl_a
+
+        closed_trades = wins + losses + breakeven
+        win_rate = round((wins / closed_trades * 100), 1) if closed_trades > 0 else 0.0
+        loss_rate = round((losses / closed_trades * 100), 1) if closed_trades > 0 else 0.0
+        profit_factor = round(total_profit_amt / total_loss_amt, 2) if total_loss_amt > 0 else (99.0 if total_profit_amt > 0 else 0.0)
+        avg_return = round(sum(pnl_pcts) / len(pnl_pcts), 1) if pnl_pcts else 0.0
+        best_trade = max(pnl_pcts) if pnl_pcts else 0.0
+        worst_trade = min(pnl_pcts) if pnl_pcts else 0.0
+
+        for sym in by_sym:
+            s_trades = by_sym[sym]["trades"]
+            by_sym[sym]["win_rate"] = round((by_sym[sym]["wins"] / s_trades * 100), 1) if s_trades > 0 else 0.0
+            by_sym[sym]["pnl_amt"] = round(by_sym[sym]["pnl_amt"], 2)
+
+        return jsonify({
+            "status": "ok",
+            "total_trades": total_trades,
+            "closed_trades": closed_trades,
+            "active_trades": active_trades,
+            "wins": wins,
+            "losses": losses,
+            "breakeven": breakeven,
+            "win_rate": win_rate,
+            "loss_rate": loss_rate,
+            "net_pnl_inr": round(total_pnl_amt, 2),
+            "total_profit_inr": round(total_profit_amt, 2),
+            "total_loss_inr": round(total_loss_amt, 2),
+            "profit_factor": profit_factor,
+            "avg_return_pct": avg_return,
+            "best_trade_pct": round(best_trade, 1),
+            "worst_trade_pct": round(worst_trade, 1),
+            "by_symbol": by_sym,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/ticker", methods=["GET"])
 def api_ticker():
     """Returns live market tickers for the marquee bar (Nifty, BankNifty, Sensex, VIX, Commodities)."""

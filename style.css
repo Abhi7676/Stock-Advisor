@@ -1233,3 +1233,67 @@ footer strong { color:var(--nse-saffron); }
   .pcr-value { font-size: 1.2rem; }
   #btnRefreshAll { font-size: 0.7rem; padding: 5px 9px; }
 }
+
+/* ─── Performance Dashboard Cards ────────────────────────────── */
+.perf-stat-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all .25s ease;
+}
+.perf-stat-card:hover {
+  border-color: var(--border-hi);
+  background: rgba(255, 255, 255, 0.05);
+  transform: translateY(-1px);
+}
+.perf-stat-label {
+  font-size: 0.68rem;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.perf-stat-val {
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+.perf-stat-sub {
+  font-size: 0.7rem;
+  color: var(--text-3);
+  opacity: 0.85;
+}
+
+.perf-breakdown-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 12px 14px;
+  transition: all .25s ease;
+}
+.perf-breakdown-card:hover {
+  border-color: var(--border-hi);
+}
+
+body.light .perf-stat-card,
+body.light .perf-breakdown-card {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+body.light .perf-stat-card:hover,
+body.light .perf-breakdown-card:hover {
+  background: #f8fafc;
+  border-color: rgba(0, 0, 0, 0.16);
+}
+
+@media (max-width: 768px) {
+  #perfBreakdown {
+    grid-template-columns: 1fr !important;
+  }
+}
