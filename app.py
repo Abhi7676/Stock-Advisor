@@ -169,9 +169,16 @@ def _init_db():
     conn.close()
 
 
+# ₹1300 hard stop-loss: square off if live loss on a trade exceeds this
+STOP_LOSS_AMOUNT_INR = 1300
+
+
 def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
     """Tracks active trade signals (BUY_CALL / BUY_PUT), updates live PnL.
-    Closes trades on: 13% profit target hit, or auto square-off at 3:00 PM IST close (no stop loss exit)."""
+    Closes trades on:
+      1. 13% profit target hit → ✅ PROFIT TARGET HIT +13.0%
+      2. ₹1300 stop loss hit  → 🛑 STOP LOSS EXIT (loss ≥ ₹1300)
+      3. Auto square-off at 3:00 PM IST market close"""
     sig_name = signal.get("signal")
     try:
         conn = db.connect()
@@ -224,15 +231,22 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
             exit_p = curr_p
 
             if pnl_pct >= 13.0 or (target_p > 0 and curr_p >= target_p):
-                # ── 13% Profit Target Hit — Stop & Book Profit Immediately ──
+                # ── 13% Profit Target Hit — Book Profit Immediately ──
                 exit_p = target_p if target_p > 0 else round(entry_p * 1.13, 2)
                 pnl_pct = 13.0
                 pnl_amt = round((exit_p - entry_p) * lot_size, 2)
                 new_status = "✅ PROFIT TARGET HIT +13.0% 🎯"
                 closed_at = now_iso
                 is_win = True
+            elif pnl_amt <= -STOP_LOSS_AMOUNT_INR:
+                # ── ₹1300 Hard Stop Loss — Exit to Protect Capital ──
+                exit_p = curr_p
+                new_status = f"🛑 STOP LOSS EXIT (₹{abs(pnl_amt):.0f} loss, {pnl_pct:.1f}%)"
+                closed_at = now_iso
+                is_win = False
+                logger.info(f"Stop loss triggered for {symbol} row {row_id}: ₹{abs(pnl_amt):.0f} loss ({pnl_pct:.1f}%)")
             elif market_closed:
-                # ── Market Close (3:00 PM IST) — Auto Square-off (No Stop Loss Exit) ──
+                # ── Market Close (3:00 PM IST) — Auto Square-off ──
                 exit_p = curr_p
                 sign = "+" if pnl_pct >= 0 else ""
                 new_status = f"⏱️ SQUARED OFF AT 3:00 PM CLOSE ({sign}{pnl_pct}%)"

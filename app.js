@@ -258,9 +258,18 @@ function renderSignal(sym, json) {
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}SL`,     s.stop_loss_premium ? `₹${s.stop_loss_premium}` : "—", "put-val");
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Lots`,   s.lots_recommended ? `${s.lots_recommended} lot(s)` : "—");
 
-  // Reasoning
-  document.getElementById(`${sym === "NIFTY" ? "nifty" : "bn"}Reasoning`).textContent =
-    s.reasoning || "—";
+  // Reasoning — friendly midday break message if applicable
+  const reasoningEl = document.getElementById(`${sym === "NIFTY" ? "nifty" : "bn"}Reasoning`);
+  if (s.source === "midday_break") {
+    reasoningEl.textContent =
+      "☕ MIDDAY BREAK (11:45 AM – 2:00 PM IST)\n" +
+      "• For your safety, no trade signals are generated during this period.\n" +
+      "• Reason: Market volumes are thin during midday, option premiums decay rapidly (theta), and false breakouts are common.\n" +
+      "• What to do: Review today's morning trades, relax, and get ready for the afternoon session which opens at 2:00 PM IST.\n" +
+      "• Afternoon Window: 2:00 PM – 3:00 PM — strong directional moves often happen in the last hour. Stay alert!";
+  } else {
+    reasoningEl.textContent = s.reasoning || "—";
+  }
 
   // Trade Execution & Holding Guide Tab
   const pfx = sym === "NIFTY" ? "nifty" : "bn";
@@ -293,21 +302,29 @@ function signalBoxClass(sig) {
 function signalMeta(s, sym) {
   if (s.source === "market_closed") {
     return {
-      cls: "wait", emoji: "🌙", label: "MARKET CLOSED",
-      subLabel: "NSE opens at 9:15 AM IST (Mon–Fri)"
+      cls: "wait", emoji: "\ud83c\udf19", label: "MARKET CLOSED",
+      subLabel: "NSE opens at 9:15 AM IST (Mon\u2013Fri)"
+    };
+  }
+  if (s.source === "midday_break") {
+    return {
+      cls: "wait",
+      emoji: "\u2615",
+      label: "MIDDAY BREAK",
+      subLabel: "No signals 11:45 AM \u2013 2:00 PM \u2014 protecting your capital during low-volume hours"
     };
   }
   if (s.signal === "BUY_CALL") return {
-    cls: "call", emoji: "📈", label: "BUY CALL ✅",
-    subLabel: `${s.strike} CE | Lot: ${s.lots_recommended || "?"} | Cost: ₹${s.estimated_cost_inr || "?"}`
+    cls: "call", emoji: "\ud83d\udcc8", label: "BUY CALL \u2705",
+    subLabel: `${s.strike} CE | Lot: ${s.lots_recommended || "?"} | Cost: \u20b9${s.estimated_cost_inr || "?"}`
   };
   if (s.signal === "BUY_PUT") return {
-    cls: "put", emoji: "📉", label: "BUY PUT 🔴",
-    subLabel: `${s.strike} PE | Lot: ${s.lots_recommended || "?"} | Cost: ₹${s.estimated_cost_inr || "?"}`
+    cls: "put", emoji: "\ud83d\udcc9", label: "BUY PUT \ud83d\udd34",
+    subLabel: `${s.strike} PE | Lot: ${s.lots_recommended || "?"} | Cost: \u20b9${s.estimated_cost_inr || "?"}`
   };
   return {
-    cls: "wait", emoji: "⏸️", label: "WAIT / AVOID",
-    subLabel: "No clear signal — stay on sidelines"
+    cls: "wait", emoji: "\u23f8\ufe0f", label: "WAIT / AVOID",
+    subLabel: "No clear signal \u2014 stay on sidelines"
   };
 }
 
@@ -521,13 +538,13 @@ function renderHistory(rows) {
         </div>
         <div style="font-size:0.67rem;color:var(--text-3);margin-top:3px;opacity:0.7">${
           row.status?.includes("ACTIVE")
-            ? "⏳ Active Position"
+            ? "\u23f3 Active Position"
             : (row.status?.includes("TARGET") || row.status?.includes("PROFIT"))
-            ? "🎯 13% Target Reached"
-            : (row.status?.includes("3:00 PM") || row.status?.includes("SQUARED OFF"))
-            ? "⏱️ 3:00 PM Close"
+            ? "\ud83c\udfaf 13% Target Reached"
             : row.status?.includes("STOP LOSS")
-            ? "🛑 Stop Loss Exit"
+            ? "\ud83d\uded1 Stop Loss Exit"
+            : (row.status?.includes("3:00 PM") || row.status?.includes("SQUARED OFF"))
+            ? "\u23f1\ufe0f 3:00 PM Close"
             : "Trade Result (% P&amp;L)"
         }</div>
       </div>

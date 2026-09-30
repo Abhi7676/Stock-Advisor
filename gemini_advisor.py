@@ -759,30 +759,40 @@ def _rule_based_signal(analysis: dict) -> dict:
     # Score of ±4 represents strong directional confirmation (e.g. PCR + MACD + RSI/Momentum)
     ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLD", 4)
 
-    if bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked:
+    # ── Gate 4: Trend Confirmation (Supertrend OR MACD must agree) ──
+    # Prevents entries when bias is met via PCR+OI+price alone while
+    # technicals remain sideways — a key cause of false-signal losses.
+    st_signal  = ta.get("supertrend_signal", "NEUTRAL")
+    macd_bias  = ta.get("macd_bias", "NEUTRAL")
+    trend_ok_bull = (st_signal == "BUY") or (macd_bias == "BULLISH")
+    trend_ok_bear = (st_signal == "SELL") or (macd_bias == "BEARISH")
+
+    if bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked and trend_ok_bull:
         signal, otype, confidence = "BUY_CALL", "CE", min(99, 75 + bias_score * 6)
         reasoning = (
             f"WHY BUY CALL (CE) — STRONG CONFIRMATION:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≥{ENTRY_THRESHOLD} met)\n"
+            f"• Trend Confirmed: Supertrend={st_signal}, MACD={macd_bias} ✅\n"
             f"• Trading Window: ✅ {window_reason}\n"
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bullish put writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
-            f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
+            f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {macd_bias}, Supertrend {st_signal}\n"
             f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
-            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST close (no stop loss exit)\n"
+            f"• Exit Rule: 13% profit target, ₹1300 stop loss, or auto square-off at 3:00 PM IST close\n"
             f"• Groww Strategy: Buy {atm} CE, set limit order within bid-ask spread."
         )
-    elif bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked:
+    elif bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked and trend_ok_bear:
         signal, otype, confidence = "BUY_PUT", "PE", min(99, 75 + abs(bias_score) * 6)
         reasoning = (
             f"WHY BUY PUT (PE) — STRONG CONFIRMATION:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≤-{ENTRY_THRESHOLD} met)\n"
+            f"• Trend Confirmed: Supertrend={st_signal}, MACD={macd_bias} ✅\n"
             f"• Trading Window: ✅ {window_reason}\n"
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bearish call writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
-            f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
+            f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {macd_bias}, Supertrend {st_signal}\n"
             f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
-            f"• Exit Rule: Stop when 13% profit is made, or auto square-off at 3:00 PM IST close (no stop loss exit)\n"
+            f"• Exit Rule: 13% profit target, ₹1300 stop loss, or auto square-off at 3:00 PM IST close\n"
             f"• Groww Strategy: Buy {atm} PE, set limit order within bid-ask spread."
         )
     else:
@@ -791,6 +801,10 @@ def _rule_based_signal(analysis: dict) -> dict:
         wait_reasons = []
         if abs(bias_score) < ENTRY_THRESHOLD:
             wait_reasons.append(f"Weak signal (bias {bias_score:+}, need ≥{ENTRY_THRESHOLD} or ≤-{ENTRY_THRESHOLD})")
+        if bias_score >= ENTRY_THRESHOLD and not trend_ok_bull:
+            wait_reasons.append(f"Trend not confirmed for BUY CALL: Supertrend={st_signal}, MACD={macd_bias} — waiting for alignment")
+        if bias_score <= -ENTRY_THRESHOLD and not trend_ok_bear:
+            wait_reasons.append(f"Trend not confirmed for BUY PUT: Supertrend={st_signal}, MACD={macd_bias} — waiting for alignment")
         if not window_ok:
             wait_reasons.append(f"Bad timing: {window_reason}")
         if loss_blocked:
@@ -804,6 +818,15 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Technical Indicators: RSI(14)={ta.get('rsi',50):.1f}, MACD {ta.get('macd_bias','')}, Supertrend {ta.get('supertrend_signal','')}\n"
             f"• Capital Protection: Preserve ₹{config.USER_BUDGET_INR:,} budget — patience is profitable."
         )
+
+    # Detect pure midday-break WAIT to let the UI show a friendly message
+    is_midday_break = (
+        signal == "WAIT"
+        and not window_ok
+        and abs(bias_score) < ENTRY_THRESHOLD
+        and not loss_blocked
+        and "Midday break" in window_reason
+    )
 
     side = "call" if otype in ("CE", "NONE") else "put"
     bd = budget_advice.get(side, {})
@@ -841,7 +864,7 @@ def _rule_based_signal(analysis: dict) -> dict:
         "atm_strike": atm, "ltp": ltp,
         "bias_score": bias_score,
         "data_source": analysis.get("data_source", "unknown"),
-        "source": "rule_based",
+        "source": "midday_break" if is_midday_break else "rule_based",
         "llm_model": "Rule-Based (Enhanced v2)",
         "llm_inference_time": 0,
         "trading_window": window_reason,
