@@ -5,12 +5,21 @@ Uses PostgreSQL (psycopg2) when DATABASE_URL env var is set (production on Rende
 falls back to SQLite for local development — zero code changes needed in app.py.
 """
 import os
+from dotenv import load_dotenv
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+# Ensure .env is loaded if present
+load_dotenv()
+
+
+def get_database_url() -> str:
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url
 
 
 def is_postgres() -> bool:
-    return bool(DATABASE_URL)
+    return bool(get_database_url())
 
 
 class _Cursor:
@@ -34,12 +43,13 @@ class Connection:
     """
 
     def __init__(self):
-        self._pg = is_postgres()
+        url = get_database_url()
+        self._pg = bool(url)
         if self._pg:
             import psycopg2
             import psycopg2.extras
             self._conn = psycopg2.connect(
-                DATABASE_URL,
+                url,
                 cursor_factory=psycopg2.extras.RealDictCursor,
             )
             self._conn.autocommit = False
