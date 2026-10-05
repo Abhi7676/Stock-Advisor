@@ -687,10 +687,8 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
 def _is_good_trading_window() -> tuple:
     """
     Returns (is_allowed, reason_str) based on IST time-of-day.
-    TWO ACTIVE WINDOWS:
-      • Morning  : 9:30 AM – 11:45 AM (institutional momentum, tight spreads)
-      • Afternoon: 2:00 PM – 3:00 PM  (pre-close session, auto square-off at 3:00 PM)
-    Midday 11:45 AM – 2:00 PM is skipped (low volume, lunch chop).
+    FULL DAY TRADING: 9:30 AM – 3:00 PM (all sessions, no midday break).
+    First 15 mins (9:15–9:30) skipped — opening auction noise / wide spreads.
     Trading stops strictly at 3:00 PM IST (all open trades square off).
     """
     from datetime import datetime
@@ -699,24 +697,16 @@ def _is_good_trading_window() -> tuple:
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
-    morning_open  = 9 * 60 + 30   # 9:30 AM
-    morning_close = 11 * 60 + 45  # 11:45 AM
-    afternoon_open  = 14 * 60     # 2:00 PM
-    afternoon_close = 15 * 60     # 3:00 PM (market close / trade square off)
+    market_open  = 9 * 60 + 30   # 9:30 AM (skip first 15 min opening noise)
+    market_close = 15 * 60       # 3:00 PM (all trades auto square-off)
 
-    if mins < morning_open:
-        wait = morning_open - mins
-        return False, f"Morning window opens at 9:30 AM IST ({wait} min away)"
-    if mins <= morning_close:
-        remaining = morning_close - mins
-        return True, f"Morning window active 9:30–11:45 AM ({remaining} min remaining)"
-    if mins < afternoon_open:
-        wait = afternoon_open - mins
-        return False, f"Midday break — afternoon window opens at 2:00 PM IST ({wait} min away)"
-    if mins < afternoon_close:
-        remaining = afternoon_close - mins
-        return True, f"Afternoon window active 2:00–3:00 PM ({remaining} min remaining)"
-    return False, "Market closed (3:00 PM+ IST) — all positions rounded up & squared off"
+    if mins < market_open:
+        wait = market_open - mins
+        return False, f"Market opens at 9:30 AM IST ({wait} min away — opening noise filter)"
+    if mins < market_close:
+        remaining = market_close - mins
+        return True, f"Market active 9:30 AM–3:00 PM IST ({remaining} min remaining)"
+    return False, "Market closed (3:00 PM+ IST) — all positions squared off"
 
 
 # ─── Consecutive Loss Tracker ────────────────────────────────
@@ -771,14 +761,14 @@ def _rule_based_signal(analysis: dict) -> dict:
     trend_ok_bear = (st_signal == "SELL") or (macd_bias == "BEARISH")
 
     # ── Gate 5: India VIX Filter ───────────────────────────
-    # VIX > 18 → options premiums are extremely expensive (high IV)
-    # and markets whipsaw violently — skip to protect capital.
-    # VIX < 12 → market is too complacent / likely to stay flat.
-    VIX_MAX = 18.0
+    # VIX > 20 → genuinely extreme volatility (crash/crisis level) — options
+    # premiums spike unmanageably and markets whipsaw; skip to protect capital.
+    # VIX < 11 → market too complacent / likely to stay flat (no premium decay benefit).
+    VIX_MAX = 20.0
     VIX_MIN = 11.0
     vix_ok = VIX_MIN <= india_vix <= VIX_MAX
     vix_reason = (
-        f"India VIX={india_vix:.1f} too HIGH (>{VIX_MAX}) — extreme volatility, options too risky"
+        f"India VIX={india_vix:.1f} too HIGH (>{VIX_MAX}) — crash-level volatility, skip"
         if india_vix > VIX_MAX else
         f"India VIX={india_vix:.1f} too LOW (<{VIX_MIN}) — market too flat for momentum trades"
         if india_vix < VIX_MIN else
@@ -786,9 +776,9 @@ def _rule_based_signal(analysis: dict) -> dict:
     )
 
     # ── Gate 6: Max Pain Pinning Filter ────────────────────
-    # When spot is within 0.35% of max pain, market makers actively
+    # When spot is within 0.20% of max pain, market makers actively
     # defend that level and directional moves stall → skip.
-    MAX_PAIN_MIN_DIST_PCT = 0.35
+    MAX_PAIN_MIN_DIST_PCT = 0.20
     max_pain_ok = max_pain_dist_pct >= MAX_PAIN_MIN_DIST_PCT
     max_pain_reason = (
         f"Spot too close to Max Pain ({analysis.get('max_pain',0)}) — "
@@ -798,13 +788,16 @@ def _rule_based_signal(analysis: dict) -> dict:
         f"Max Pain distance {max_pain_dist_pct:.2f}% ✅ (safe)"
     )
 
-    # ── Gate 7: 15-min Trend Confirmation ──────────────────
-    # The 5-min trend can be bullish while the 15-min is still bearish.
-    # Require 15-min Supertrend OR 15-min MACD to also agree.
+    # ── Gate 7: 15-min Trend Anti-Conflict Check (softened) ─
+    # Only BLOCK if the 15-min is ACTIVELY OPPOSING the 5-min setup.
+    # NEUTRAL 15-min is allowed — it just means the higher timeframe hasn't
+    # confirmed yet, but hasn't rejected the trade either.
     st_15m   = ta_15m.get("supertrend_signal", "NEUTRAL")
     macd_15m = ta_15m.get("macd_bias", "NEUTRAL")
-    trend_15m_bull = (st_15m == "BUY") or (macd_15m == "BULLISH")
-    trend_15m_bear = (st_15m == "SELL") or (macd_15m == "BEARISH")
+    # For a BUY CALL: only block if 15m is actively bearish (SELL + BEARISH)
+    trend_15m_bull = not (st_15m == "SELL" and macd_15m == "BEARISH")
+    # For a BUY PUT: only block if 15m is actively bullish (BUY + BULLISH)
+    trend_15m_bear = not (st_15m == "BUY" and macd_15m == "BULLISH")
     trend_15m_reason_bull = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
     trend_15m_reason_bear = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
 

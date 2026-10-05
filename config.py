@@ -21,7 +21,7 @@ INDICES = {
     "NIFTY": {
         "symbol": "NIFTY",
         "display_name": "Nifty 50",
-        "lot_size": 75,
+        "lot_size": 65,
         "yf_symbol": "^NSEI",
     },
     "BANKNIFTY": {
