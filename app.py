@@ -92,6 +92,7 @@ from gemini_advisor import (
     get_gemini_call_logs,
     test_gemini_call,
 )
+from notifier import send_signal_alert
 
 # ─── App Setup ────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -298,6 +299,9 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                     "ACTIVE",
                     _now_ist(),
                 ))
+                # ★ Fire instant alert (Telegram + Email) in background threads
+                send_signal_alert(signal)
+                logger.info(f"New signal logged + alerts triggered: {symbol} {sig_name}")
 
         conn.commit()
         conn.close()
