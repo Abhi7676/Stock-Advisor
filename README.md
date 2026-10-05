@@ -18,8 +18,9 @@ A **100% free, real-time AI Options Trading Signal Advisor** for Nifty 50 & Bank
   - **Supertrend** — Buy/Sell trend signal
   - **Composite Bias Score** — All signals combined into -10 to +10 score
 - 💰 **₹10,000 Budget Optimizer**: Tells you exact strike, how many lots, cost, 13% target premium, and 8% stop-loss (auto square-off at 3:00 PM IST close)
-- ⏱️ **Auto-Refresh every 60 seconds** during market hours
-- 📋 **Signal History Log**: All past CALL/PUT signals saved to SQLite database
+- ⏱️ **Auto-Refresh every 15 seconds** during market hours
+- 📋 **Signal History Log**: All past CALL/PUT signals saved to Neon PostgreSQL / SQLite database
+- 📲 **Telegram Signal Alerts**: Instant mobile notifications when BUY CALL / BUY PUT triggers with entry, +13% target, and stop loss!
 
 ---
 
@@ -41,13 +42,24 @@ GEMINI_API_KEY = "AIza..."  # Your key here
 
 > **Without a key**: The app still works using rule-based signal logic (PCR + RSI + MACD + Supertrend scoring). Still very useful!
 
-### 3. Launch the Application
+### 3. Setup Telegram Alerts (100% Free)
+1. Message **@BotFather** on Telegram &rarr; send `/newbot` &rarr; name your bot &rarr; copy the **Bot Token**.
+2. Message **@userinfobot** on Telegram &rarr; copy your numeric **Chat ID**.
+3. Open your new bot in Telegram and click **Start** (or send `/start`) so it can message you.
+4. Set them in `.env` (or Render Dashboard &rarr; Environment):
+   ```bash
+   TELEGRAM_BOT_TOKEN="your_token_here"
+   TELEGRAM_CHAT_ID="your_chat_id_here"
+   ```
+
+### 4. Launch the Application
 ```bash
 python app.py
 ```
 
-### 4. Open Dashboard
+### 5. Open Dashboard & Test
 Navigate to: **http://127.0.0.1:5000**
+Click the **✈ Telegram: Active** pill in the top header to send a test alert directly to your phone!
 
 ---
 

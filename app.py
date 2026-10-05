@@ -92,7 +92,7 @@ from gemini_advisor import (
     get_gemini_call_logs,
     test_gemini_call,
 )
-from notifier import send_signal_alert
+from notifier import send_signal_alert, test_telegram_connection
 
 # ─── App Setup ────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -639,6 +639,28 @@ def api_force_refresh(symbol: str):
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 404
     _refresh(symbol, force=True)
     return jsonify({"status": "ok", "message": f"Refreshed {symbol}"})
+
+
+@app.route("/api/telegram/status", methods=["GET"])
+def api_telegram_status():
+    """Returns Telegram configuration status (without exposing secrets)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    return jsonify({
+        "configured": bool(token and chat_id),
+        "bot_token_set": bool(token),
+        "chat_id_set": bool(chat_id),
+        "masked_token": (token[:4] + "..." + token[-4:]) if len(token) > 8 else ("Set" if token else "Not Set"),
+        "masked_chat_id": (chat_id[:2] + "..." + chat_id[-2:]) if len(chat_id) > 4 else ("Set" if chat_id else "Not Set"),
+    })
+
+
+@app.route("/api/telegram/test", methods=["GET", "POST"])
+def api_telegram_test():
+    """Sends a sample test alert to the configured Telegram chat."""
+    result = test_telegram_connection()
+    status_code = 200 if result.get("status") == "ok" else 400
+    return jsonify(result), status_code
 
 
 @app.route("/api/debug", methods=["GET"])

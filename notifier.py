@@ -1,50 +1,31 @@
 """
-notifier.py — Instant Alert System for F&O Signal Advisor
-Sends BUY CALL / BUY PUT alerts the moment a new signal fires.
-
-SUPPORTED CHANNELS (both free, both work on Render free tier):
-  1. Telegram Bot — Instant phone notification with full signal details
-  2. Gmail Email  — Rich HTML email with strike, premium, target, SL
+notifier.py — Telegram Alert System for F&O Signal Advisor
+Sends BUY CALL / BUY PUT alerts instantly to your phone via Telegram Bot.
 
 SETUP (set these as Render Environment Variables or in .env):
-  Telegram:
-    TELEGRAM_BOT_TOKEN  — from @BotFather (create a bot → /newbot)
-    TELEGRAM_CHAT_ID    — your personal chat ID (message @userinfobot to get it)
+  TELEGRAM_BOT_TOKEN  — from @BotFather on Telegram  (/newbot → copy token)
+  TELEGRAM_CHAT_ID    — your chat ID  (message @userinfobot → copy the ID number)
 
-  Gmail:
-    ALERT_EMAIL_FROM     — your Gmail address (sender)
-    ALERT_EMAIL_TO       — recipient email (can be same Gmail or phone carrier email for SMS)
-    ALERT_EMAIL_PASSWORD — Gmail App Password (NOT your login password)
-                           Go to: myaccount.google.com → Security → 2-Step Verification → App passwords
+After creating the bot, send it /start once so it can message you.
 """
 
 import logging
 import os
-import smtplib
+import threading
 from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-# ─── Environment Variables ────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID    = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-ALERT_EMAIL_FROM     = os.environ.get("ALERT_EMAIL_FROM", "").strip()
-ALERT_EMAIL_TO       = os.environ.get("ALERT_EMAIL_TO", "").strip()
-ALERT_EMAIL_PASSWORD = os.environ.get("ALERT_EMAIL_PASSWORD", "").strip()
-
-
-# ─── Message Builder ──────────────────────────────────────────────────────────
 
 def _ist_now() -> str:
     return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %I:%M %p IST")
 
 
-def _build_message(signal: dict) -> dict:
-    """Build Telegram text + HTML email body from a signal dict."""
+def _build_telegram_message(signal: dict) -> str:
     sym    = signal.get("symbol", "?")
     sig    = signal.get("signal", "?")
     strike = signal.get("strike", "?")
@@ -60,164 +41,114 @@ def _build_message(signal: dict) -> dict:
 
     is_call  = sig == "BUY_CALL"
     emoji    = "🟢" if is_call else "🔴"
-    dir_text = "📈 BUY CALL (CE)" if is_call else "📉 BUY PUT (PE)"
-    clr      = "#10b981" if is_call else "#ef4444"
+    dir_text = "📈 BUY CALL \\(CE\\)" if is_call else "📉 BUY PUT \\(PE\\)"
 
-    # ── Telegram (Markdown) ──────────────────────────────────────────────────
-    tg_text = (
-        f"{emoji} *F\\&O SIGNAL ALERT — {sym}*\n"
+    # MarkdownV2 requires escaping: . - + ( ) ! = > < |
+    def esc(v):
+        return str(v).replace(".", "\\.").replace("-", "\\-").replace("+", "\\+").replace("(", "\\(").replace(")", "\\)").replace("!", "\\!").replace("=", "\\=")
+
+    bias_str = esc(f"{bias:+}")
+    ltp_str  = esc(f"{ltp:,}")
+    prem_str = esc(str(prem))
+    tgt_str  = esc(str(target))
+    sl_str   = esc(str(sl))
+    conf_str = esc(str(conf))
+    strike_str = esc(str(strike))
+    expiry_str = esc(str(expiry))
+
+    return (
+        f"{emoji} *F\\&O SIGNAL ALERT — {esc(sym)}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"*{dir_text}*\n"
-        f"Strike: `{strike} {otype}` | Expiry: `{expiry}`\n"
+        f"Strike: `{strike_str} {otype}` \\| Expiry: `{expiry_str}`\n"
         f"\n"
-        f"💰 Entry Premium: `₹{prem}`\n"
-        f"🎯 Target: `₹{target}` \\(\\+13%\\)\n"
-        f"🛑 Stop Loss: `₹{sl}` \\(₹1300 max loss\\)\n"
+        f"💰 Entry Premium: `₹{prem_str}`\n"
+        f"🎯 Target: `₹{tgt_str}` \\(\\+13%\\)\n"
+        f"🛑 Stop Loss: `₹{sl_str}` \\(₹1300 max loss\\)\n"
         f"\n"
-        f"📊 Spot LTP: `₹{ltp:,}` | Bias: `{bias:+}/±10` | Conf: `{conf}%`\n"
-        f"⏱ {now}\n"
+        f"📊 Spot: `₹{ltp_str}` \\| Bias: `{bias_str}/±10` \\| Conf: `{conf_str}%`\n"
+        f"⏱ {esc(now)}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"_Enter on Groww F\\&O\\. Exit at \\+13% or 3:00 PM IST auto square\\-off\\._"
     )
 
-    # ── Email Subject ────────────────────────────────────────────────────────
-    subject = f"{emoji} {sym} {dir_text} @ ₹{prem} — {now}"
 
-    # ── Email HTML Body ──────────────────────────────────────────────────────
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"></head>
-<body style="margin:0;padding:0;background:#0d1117;font-family:'Segoe UI',Arial,sans-serif;">
-<div style="max-width:500px;margin:30px auto;background:#161b22;border-radius:14px;overflow:hidden;border:2px solid {clr};">
-
-  <!-- Header -->
-  <div style="background:{clr};padding:18px 22px;">
-    <div style="font-size:22px;font-weight:800;color:#fff;">{emoji} {dir_text}</div>
-    <div style="font-size:13px;color:rgba(255,255,255,.8);margin-top:4px;">{sym} &nbsp;|&nbsp; {now}</div>
-  </div>
-
-  <!-- Body -->
-  <div style="padding:22px;">
-    <table style="width:100%;border-collapse:collapse;font-size:14px;">
-      <tr style="border-bottom:1px solid rgba(255,255,255,.07);">
-        <td style="padding:10px 0;color:#8b949e;">Strike</td>
-        <td style="padding:10px 0;font-weight:700;color:#e6edf3;">{strike} {otype} &nbsp;<span style="color:{clr};font-size:12px;">{expiry}</span></td>
-      </tr>
-      <tr style="border-bottom:1px solid rgba(255,255,255,.07);">
-        <td style="padding:10px 0;color:#8b949e;">Entry Premium</td>
-        <td style="padding:10px 0;font-weight:700;color:#e6edf3;font-size:18px;">₹{prem}</td>
-      </tr>
-      <tr style="border-bottom:1px solid rgba(255,255,255,.07);">
-        <td style="padding:10px 0;color:#8b949e;">🎯 Target (+13%)</td>
-        <td style="padding:10px 0;font-weight:700;color:#10b981;font-size:16px;">₹{target}</td>
-      </tr>
-      <tr style="border-bottom:1px solid rgba(255,255,255,.07);">
-        <td style="padding:10px 0;color:#8b949e;">🛑 Stop Loss</td>
-        <td style="padding:10px 0;font-weight:700;color:#ef4444;font-size:16px;">₹{sl} &nbsp;<span style="font-size:12px;color:#8b949e;">(₹1300 max loss)</span></td>
-      </tr>
-      <tr style="border-bottom:1px solid rgba(255,255,255,.07);">
-        <td style="padding:10px 0;color:#8b949e;">Spot LTP</td>
-        <td style="padding:10px 0;font-weight:700;color:#e6edf3;">₹{ltp:,}</td>
-      </tr>
-      <tr style="border-bottom:1px solid rgba(255,255,255,.07);">
-        <td style="padding:10px 0;color:#8b949e;">Bias Score</td>
-        <td style="padding:10px 0;font-weight:700;color:#e6edf3;">{bias:+} / ±10</td>
-      </tr>
-      <tr>
-        <td style="padding:10px 0;color:#8b949e;">AI Confidence</td>
-        <td style="padding:10px 0;font-weight:700;color:{clr};">{conf}%</td>
-      </tr>
-    </table>
-
-    <!-- Note -->
-    <div style="margin-top:18px;padding:12px 14px;background:rgba(255,255,255,.04);border-radius:8px;font-size:12px;color:#8b949e;line-height:1.6;">
-      Enter on <strong style="color:#e6edf3;">Groww F&amp;O</strong>. Set a limit order within the bid-ask spread.
-      Exit at <strong style="color:#10b981;">+13% profit target</strong> or auto square-off at <strong style="color:#e6edf3;">3:00 PM IST</strong>.
-      Stop loss at <strong style="color:#ef4444;">₹1,300 max loss</strong> per trade.
-    </div>
-  </div>
-
-  <!-- Footer -->
-  <div style="padding:12px 22px;border-top:1px solid rgba(255,255,255,.07);font-size:11px;color:#484f58;text-align:center;">
-    AI F&amp;O Signal Advisor • Powered by Google Gemini + NSE Live Data
-  </div>
-</div>
-</body></html>"""
-
-    return {"tg": tg_text, "subject": subject, "html": html}
+def _get_credentials():
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    return token, chat_id
 
 
-# ─── Telegram ─────────────────────────────────────────────────────────────────
-
-def send_telegram_alert(signal: dict) -> bool:
-    """Send signal alert via Telegram Bot. Returns True if successfully sent."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.debug("Telegram not configured — skipping (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)")
-        return False
+def _send_telegram(signal: dict):
+    """Internal — sends the Telegram message. Runs in a background thread."""
+    token, chat_id = _get_credentials()
+    if not token or not chat_id:
+        logger.debug("Telegram not configured — set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID")
+        return
     try:
         import requests
-        msg = _build_message(signal)
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        resp = requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": msg["tg"],
-            "parse_mode": "MarkdownV2",
-        }, timeout=12)
+        text = _build_telegram_message(signal)
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"},
+            timeout=12,
+        )
         if resp.ok:
             logger.info(
-                f"✅ Telegram alert sent: {signal.get('symbol')} {signal.get('signal')} "
-                f"@ ₹{signal.get('entry_premium')}"
+                f"✅ Telegram alert sent: {signal.get('symbol')} "
+                f"{signal.get('signal')} @ ₹{signal.get('entry_premium')}"
             )
-            return True
-        logger.warning(f"Telegram alert failed: HTTP {resp.status_code} — {resp.text[:300]}")
+        else:
+            logger.warning(f"Telegram alert failed: HTTP {resp.status_code} — {resp.text[:300]}")
     except Exception as e:
         logger.warning(f"Telegram alert error: {e}")
-    return False
 
-
-# ─── Gmail Email ──────────────────────────────────────────────────────────────
-
-def send_email_alert(signal: dict) -> bool:
-    """Send signal alert via Gmail SMTP. Returns True if successfully sent."""
-    if not ALERT_EMAIL_FROM or not ALERT_EMAIL_PASSWORD or not ALERT_EMAIL_TO:
-        logger.debug("Email not configured — skipping (set ALERT_EMAIL_FROM/TO/PASSWORD)")
-        return False
-    try:
-        msg = _build_message(signal)
-        mail = MIMEMultipart("alternative")
-        mail["Subject"] = msg["subject"]
-        mail["From"]    = f"F&O Signal Advisor <{ALERT_EMAIL_FROM}>"
-        mail["To"]      = ALERT_EMAIL_TO
-        mail.attach(MIMEText(msg["html"], "html", "utf-8"))
-
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.login(ALERT_EMAIL_FROM, ALERT_EMAIL_PASSWORD)
-            smtp.send_message(mail)
-
-        logger.info(
-            f"✅ Email alert sent to {ALERT_EMAIL_TO}: "
-            f"{signal.get('symbol')} {signal.get('signal')} "
-            f"@ ₹{signal.get('entry_premium')}"
-        )
-        return True
-    except Exception as e:
-        logger.warning(f"Email alert error: {e}")
-    return False
-
-
-# ─── Main Entry Point ─────────────────────────────────────────────────────────
 
 def send_signal_alert(signal: dict):
     """
-    Send BUY CALL / BUY PUT alert to all configured channels simultaneously.
-    Called by app.py after a new trade signal is confirmed and logged to the DB.
-    WAIT signals are silently ignored — only actual trade entries trigger alerts.
+    Fire a Telegram alert when a new BUY CALL or BUY PUT signal is confirmed.
+    Runs in a background daemon thread — never blocks the main API response.
+    WAIT signals are silently ignored.
     """
     if signal.get("signal") not in ("BUY_CALL", "BUY_PUT"):
-        return  # Only alert on actual trade recommendations
+        return
+    threading.Thread(target=_send_telegram, args=(signal,), daemon=True).start()
 
-    import threading
-    # Fire alerts in background threads so they never slow down the main API response
-    threading.Thread(target=send_telegram_alert, args=(signal,), daemon=True).start()
-    threading.Thread(target=send_email_alert,    args=(signal,), daemon=True).start()
+
+def test_telegram_connection() -> dict:
+    """Send a test signal alert to verify Telegram credentials."""
+    token, chat_id = _get_credentials()
+    if not token or not chat_id:
+        return {
+            "status": "error",
+            "message": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing in environment variables."
+        }
+    try:
+        import requests
+        sample_signal = {
+            "symbol": "NIFTY",
+            "signal": "BUY_CALL",
+            "strike": 24800,
+            "option_type": "CE",
+            "entry_premium": 150.0,
+            "target_premium": 169.5,
+            "stop_loss_premium": 130.0,
+            "confidence": 85,
+            "nearest_expiry": "Weekly",
+            "bias_score": 6,
+            "ltp": 24820.5,
+        }
+        text = (
+            "🔔 *F\\&O Signal Advisor \\(Test Alert\\)*\n\n"
+            + _build_telegram_message(sample_signal)
+        )
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "MarkdownV2"},
+            timeout=12,
+        )
+        if resp.ok:
+            return {"status": "ok", "message": "Test alert delivered to Telegram successfully!"}
+        return {"status": "error", "message": f"Telegram API error {resp.status_code}: {resp.text}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

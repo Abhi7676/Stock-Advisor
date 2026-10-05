@@ -136,6 +136,8 @@ body.light .btn-primary:hover { box-shadow: 0 6px 20px rgba(0,179,134,0.5); }
 body.light .status-pill.market-open  { background:rgba(0,179,134,0.1); border-color:rgba(0,179,134,0.3); }
 body.light .status-pill.market-closed{ background:rgba(224,49,49,0.08); border-color:rgba(224,49,49,0.25); }
 body.light .status-pill.gemini-on    { background:rgba(0,179,134,0.1); border-color:rgba(0,179,134,0.3); color:var(--accent); }
+body.light .status-pill.telegram-on  { background:rgba(0,136,204,0.12); border-color:rgba(0,136,204,0.3); color:#0288d1; }
+body.light .status-pill.telegram-off { background:rgba(245,158,11,0.12); border-color:rgba(245,158,11,0.3); color:#d97706; }
 
 /* Light mode history, indicators, misc text */
 body.light .history-item { border-bottom:1px solid rgba(0,0,0,0.06); }
@@ -350,6 +352,8 @@ header {
 .status-pill.market-closed{ background:rgba(255,82,82,0.1);  color:var(--put);  border:1px solid rgba(255,82,82,0.25);}
 .status-pill.gemini-on    { background:rgba(99,102,241,0.12);color:var(--accent);border:1px solid rgba(99,102,241,0.3);} 
 .status-pill.gemini-off   { background:rgba(245,158,11,0.12);color:var(--wait); border:1px solid rgba(245,158,11,0.3);} 
+.status-pill.telegram-on  { background:rgba(0,136,204,0.15); color:#29b6f6; border:1px solid rgba(0,136,204,0.35); }
+.status-pill.telegram-off { background:rgba(245,158,11,0.12); color:var(--wait); border:1px solid rgba(245,158,11,0.3); }
 
 .pulse { width:7px;height:7px;border-radius:50%;animation:pulse 1.5s ease infinite; }
 .pulse.green{ background:var(--call); box-shadow:0 0 6px var(--call); }

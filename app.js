@@ -45,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   checkMarketStatus();
   checkGeminiStatus();
+  checkTelegramStatus();
   fetchMarketTicker();
   fetchAllData();
   startCountdown();
@@ -117,6 +118,49 @@ async function checkGeminiStatus() {
     dot.className = "pulse amber";
     txt.textContent = "⚠ Gemini: Offline (rule-based)";
   }
+}
+
+// ─── Telegram Status & Test ────────────────────────────────────
+async function checkTelegramStatus() {
+  const pill = document.getElementById("telegramPill");
+  const dot = document.getElementById("telegramDot");
+  const txt = document.getElementById("telegramText");
+  if (!pill) return;
+  try {
+    const r = await fetch(`${API}/api/telegram/status`);
+    const d = await r.json();
+    if (d.configured) {
+      pill.className = "status-pill telegram-on";
+      if (dot) dot.className = "pulse green";
+      if (txt) txt.textContent = "✈ Telegram: Active";
+      pill.title = `Telegram Alerts Active (${d.masked_bot_token || 'Configured'}). Click to send test alert.`;
+    } else {
+      pill.className = "status-pill telegram-off";
+      if (dot) dot.className = "pulse amber";
+      if (txt) txt.textContent = "✈ Telegram: Off";
+      pill.title = "Telegram not configured. Add TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID in Render or .env.";
+    }
+  } catch {
+    if (txt) txt.textContent = "✈ Telegram: Offline";
+  }
+}
+
+async function triggerTelegramTest() {
+  const txt = document.getElementById("telegramText");
+  const orig = txt ? txt.textContent : "";
+  if (txt) txt.textContent = "✈ Sending test...";
+  try {
+    const res = await fetch(`${API}/api/telegram/test`, { method: "POST" });
+    const data = await res.json();
+    if (data.status === "ok") {
+      alert("✅ Telegram test alert delivered successfully!\n\nCheck your Telegram chat to see the formatted signal message.");
+    } else {
+      alert("⚠ Telegram alert failed:\n\n" + data.message + "\n\nSteps to fix:\n1. Check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Render / .env\n2. Open your Telegram bot and click 'Start' (/start) so the bot can message you.");
+    }
+  } catch (e) {
+    alert("⚠ Could not reach server to test Telegram: " + e.message);
+  }
+  checkTelegramStatus();
 }
 
 async function fetchMarketTicker() {
