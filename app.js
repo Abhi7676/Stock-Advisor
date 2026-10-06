@@ -60,9 +60,16 @@ document.addEventListener("DOMContentLoaded", () => {
     btn.innerHTML = "🔄 Refresh Signals";
   });
 
-  document.getElementById("btnClearHistory").addEventListener("click", () => {
-    document.getElementById("historyList").innerHTML =
-      `<div style="text-align:center;padding:16px;color:var(--text-3);">History cleared.</div>`;
+  document.getElementById("btnClearHistory").addEventListener("click", async () => {
+    if (!confirm("Clear all signal history from database?")) return;
+    try {
+      await fetch(`${API}/api/signal-history/clear`, { method: "POST" });
+      document.getElementById("historyList").innerHTML =
+        `<div style="text-align:center;padding:16px;color:var(--text-3);">Signal history cleared.</div>`;
+      fetchPerformanceDashboard();
+    } catch (e) {
+      console.warn("Failed to clear history:", e);
+    }
   });
 });
 

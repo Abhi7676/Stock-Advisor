@@ -505,18 +505,84 @@ def _synthetic_chain(symbol: str) -> dict:
     }
 
 
+# NSE Trading Holidays (National holidays when F&O market is closed)
+# If an expiry falls on a holiday, NSE rules state it expires on the preceding trading day.
+NSE_TRADING_HOLIDAYS = {
+    # 2026 Official NSE Trading Holidays
+    date(2026, 1, 26),   # Republic Day
+    date(2026, 3, 6),    # Holi
+    date(2026, 3, 20),   # Id-ul-Fitr
+    date(2026, 4, 3),    # Good Friday
+    date(2026, 4, 14),   # Dr. Ambedkar Jayanti
+    date(2026, 5, 1),    # Maharashtra Day
+    date(2026, 5, 27),   # Bakrid / Eid-ul-Adha
+    date(2026, 8, 15),   # Independence Day
+    date(2026, 10, 2),   # Gandhi Jayanti
+    date(2026, 10, 20),  # Dussehra
+    date(2026, 11, 10),  # Diwali (Laxmi Pujan)
+    date(2026, 11, 24),  # Guru Nanak Jayanti (Tuesday) -> Preceding trading day is Monday Nov 23!
+    date(2026, 12, 25),  # Christmas
+    # 2027 Major Holidays
+    date(2027, 1, 26),
+    date(2027, 3, 23),
+    date(2027, 3, 26),
+    date(2027, 4, 14),
+    date(2027, 5, 1),
+    date(2027, 8, 15),
+    date(2027, 10, 2),
+    date(2027, 10, 29),
+    date(2027, 11, 18),
+    date(2027, 12, 25),
+}
+
+
+def _adjust_for_holidays(exp_date: date) -> date:
+    """If an expiry falls on an NSE trading holiday or weekend, moves to preceding trading day."""
+    while exp_date.weekday() >= 5 or exp_date in NSE_TRADING_HOLIDAYS:
+        exp_date -= timedelta(days=1)
+    return exp_date
+
+
 def _get_expiry_info(symbol: str) -> tuple:
-    """Calculates active contract expiry date dynamically for synthetic fallback."""
+    """
+    Calculates active contract expiry date dynamically with NSE holiday adjustments:
+      - NIFTY: Weekly options expiring every Thursday (or preceding day if holiday)
+      - BANKNIFTY: Monthly options expiring on the last Tuesday of each month
+                   (shifts to Monday if Tuesday is an NSE holiday, e.g. 23-Nov-2026 for Guru Nanak Jayanti!)
+    Automatically rolls over to the next month/cycle as soon as expiry passes.
+    """
+    import calendar
     from zoneinfo import ZoneInfo
     today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-    # Weekly options expiry (Thursdays=3)
-    target_weekday = 3
-    days_ahead = (target_weekday - today.weekday()) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    expiry_date = today + timedelta(days=days_ahead)
-    expiry_str = expiry_date.strftime("%d-%b-%Y")
-    return expiry_str, days_ahead
+
+    if symbol.upper() == "NIFTY":
+        # Weekly Thursday expiry (Thursday = weekday 3)
+        target_weekday = 3
+        days_ahead = (target_weekday - today.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        expiry_date = today + timedelta(days=days_ahead)
+        adj_expiry = _adjust_for_holidays(expiry_date)
+        return adj_expiry.strftime("%d-%b-%Y"), max(1, (adj_expiry - today).days)
+
+    # BANKNIFTY: Monthly contract (last Tuesday of active month; Tuesday = weekday 1)
+    def _last_tuesday(y: int, m: int) -> date:
+        last_day_num = calendar.monthrange(y, m)[1]
+        last_day = date(y, m, last_day_num)
+        offset = (last_day.weekday() - 1) % 7
+        return last_day - timedelta(days=offset)
+
+    exp_date = _last_tuesday(today.year, today.month)
+    adj_exp_date = _adjust_for_holidays(exp_date)
+    if today > adj_exp_date:
+        # Current month's expiry date has passed; auto roll over to next month
+        next_m = today.month + 1 if today.month < 12 else 1
+        next_y = today.year if today.month < 12 else today.year + 1
+        exp_date = _last_tuesday(next_y, next_m)
+        adj_exp_date = _adjust_for_holidays(exp_date)
+
+    days_ahead = max(1, (adj_exp_date - today).days)
+    return adj_exp_date.strftime("%d-%b-%Y"), days_ahead
 
 
 # ─── Historical Candles for Technical Analysis ─────────────────────────────────

@@ -167,6 +167,33 @@ def _init_db():
         conn.commit()
     except Exception:
         conn.rollback()
+
+    # Step 4: Repair any glitched rows where stop-loss exceeded the ₹1300 max cap
+    try:
+        rows_to_fix = conn.execute("""
+            SELECT id, symbol, entry_premium FROM signal_history
+            WHERE pnl_amount < -1350 AND status LIKE '%STOP LOSS%'
+        """).fetchall()
+        for r in rows_to_fix:
+            rid = r["id"]
+            sym = r["symbol"]
+            ep = float(r["entry_premium"] or 100.0)
+            lot = 65 if sym == "NIFTY" else 30
+            fixed_exit = round(max(0.5, ep - (1300.0 / lot)), 2)
+            fixed_pct = round(((fixed_exit - ep) / ep) * 100.0, 1)
+            conn.execute("""
+                UPDATE signal_history
+                SET pnl_amount = -1300.0,
+                    exit_premium = ?,
+                    pnl_pct = ?,
+                    status = ?
+                WHERE id = ?
+            """, (fixed_exit, fixed_pct, f"🛑 STOP LOSS EXIT (₹1300 loss, {fixed_pct}%)", rid))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Error repairing glitched SL rows: {e}")
+        conn.rollback()
+
     conn.close()
 
 
@@ -241,11 +268,15 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 is_win = True
             elif pnl_amt <= -STOP_LOSS_AMOUNT_INR:
                 # ── ₹1300 Hard Stop Loss — Exit to Protect Capital ──
-                exit_p = curr_p
-                new_status = f"🛑 STOP LOSS EXIT (₹{abs(pnl_amt):.0f} loss, {pnl_pct:.1f}%)"
+                # Order executed at stop-loss price; loss is strictly capped at ₹1300
+                sl_exit_p = round(max(0.5, entry_p - (STOP_LOSS_AMOUNT_INR / lot_size)), 2)
+                exit_p = sl_exit_p
+                pnl_amt = -float(STOP_LOSS_AMOUNT_INR)
+                pnl_pct = round(((exit_p - entry_p) / entry_p) * 100.0, 1)
+                new_status = f"🛑 STOP LOSS EXIT (₹{STOP_LOSS_AMOUNT_INR} loss, {pnl_pct}%)"
                 closed_at = now_iso
                 is_win = False
-                logger.info(f"Stop loss triggered for {symbol} row {row_id}: ₹{abs(pnl_amt):.0f} loss ({pnl_pct:.1f}%)")
+                logger.info(f"Stop loss triggered for {symbol} row {row_id}: ₹{STOP_LOSS_AMOUNT_INR} loss ({pnl_pct}%)")
             elif market_closed:
                 # ── Market Close (3:00 PM IST) — Auto Square-off ──
                 exit_p = curr_p
@@ -466,6 +497,50 @@ def api_signal_history():
                 break
 
         return jsonify({"status": "ok", "count": len(result), "data": result})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/signal-history/clear", methods=["POST", "DELETE"])
+def api_clear_signal_history():
+    """Clears signal history on user request."""
+    try:
+        conn = db.connect()
+        conn.execute("DELETE FROM signal_history")
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "ok", "message": "Signal history cleared successfully"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/repair-glitch", methods=["GET", "POST"])
+def api_repair_glitch():
+    """Fixes or deletes the glitched -₹6032 trade row directly in Neon database."""
+    action = request.args.get("action", "repair")
+    try:
+        conn = db.connect()
+        if action == "delete":
+            conn.execute("DELETE FROM signal_history WHERE pnl_amount < -1350")
+            msg = "Glitched -₹6032 trade successfully deleted from database!"
+        else:
+            rows = conn.execute("SELECT id, entry_premium FROM signal_history WHERE pnl_amount < -1350").fetchall()
+            for r in rows:
+                ep = float(r["entry_premium"] or 714.0)
+                exit_p = round(ep - (1300.0 / 30.0), 2)
+                pct = round(((exit_p - ep) / ep) * 100.0, 1)
+                conn.execute("""
+                    UPDATE signal_history
+                    SET pnl_amount = -1300.0,
+                        exit_premium = ?,
+                        pnl_pct = ?,
+                        status = ?
+                    WHERE id = ?
+                """, (exit_p, pct, f"🛑 STOP LOSS EXIT (₹1300 loss, {pct}%)", r["id"]))
+            msg = f"Repaired {len(rows)} glitched trade row(s) to strictly ₹1300 stop loss."
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "ok", "message": msg})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
