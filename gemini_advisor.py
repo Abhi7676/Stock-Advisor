@@ -709,12 +709,35 @@ def _is_good_trading_window() -> tuple:
     return False, "Market closed (3:00 PM+ IST) — all positions squared off"
 
 
-# ─── Consecutive Loss Tracker ────────────────────────────────
+# ─── Consecutive Loss Tracker (Resets daily each morning) ───
 _consecutive_losses = {"NIFTY": 0, "BANKNIFTY": 0}
+_loss_tracker_date = None
+
+
+def _get_today_date_ist() -> str:
+    """Returns today's date in IST (YYYY-MM-DD)."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+    except Exception:
+        import time as _t
+        return _t.strftime("%Y-%m-%d")
+
+
+def _check_daily_reset():
+    """Automatically resets the loss circuit-breaker at the start of every new trading day."""
+    global _consecutive_losses, _loss_tracker_date
+    today = _get_today_date_ist()
+    if _loss_tracker_date != today:
+        _consecutive_losses = {"NIFTY": 0, "BANKNIFTY": 0}
+        _loss_tracker_date = today
+
 
 def record_trade_result(symbol: str, is_win: bool):
-    """Called by app.py when a trade closes. Tracks consecutive losses."""
+    """Called by app.py when a trade closes. Tracks intraday consecutive losses."""
     global _consecutive_losses
+    _check_daily_reset()
     if is_win:
         _consecutive_losses[symbol] = 0
     else:
@@ -722,7 +745,18 @@ def record_trade_result(symbol: str, is_win: bool):
 
 
 def _get_consecutive_losses(symbol: str) -> int:
+    """Returns current intraday consecutive losses for the symbol."""
+    _check_daily_reset()
     return _consecutive_losses.get(symbol, 0)
+
+
+def reset_consecutive_losses(symbol: str | None = None):
+    """Manually reset consecutive losses for a symbol or both."""
+    global _consecutive_losses
+    if symbol:
+        _consecutive_losses[symbol] = 0
+    else:
+        _consecutive_losses = {"NIFTY": 0, "BANKNIFTY": 0}
 
 
 # ─── Rule-Based Fallback Signal ───────────────────────────────
@@ -859,7 +893,7 @@ def _rule_based_signal(analysis: dict) -> dict:
         if not window_ok:
             wait_reasons.append(f"Bad timing: {window_reason}")
         if loss_blocked:
-            wait_reasons.append(f"Capital protection: {consec_losses} consecutive losses — waiting for reset")
+            wait_reasons.append(f"Capital protection: {consec_losses} consecutive losses today — trading paused for today (resets tomorrow morning)")
 
         reasoning = (
             f"WHY WAIT (NO TRADE) — CAPITAL PROTECTION:\n"
