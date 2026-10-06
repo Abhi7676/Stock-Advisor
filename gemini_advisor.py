@@ -121,22 +121,71 @@ def get_last_error() -> dict | None:
         return None
     return {"error": _last_error, "time": _last_error_time}
 
-# ─── Check Gemini availability ───────────────────────────────
+# ─── Multi-Key Gemini Management & 429 Failover ─────────────
+_key_cooldowns: dict[str, float] = {}
+
+
+def _get_api_keys() -> list[str]:
+    """
+    Returns list of all available Gemini API keys in priority order.
+    Supports:
+      - GEMINI_API_KEY (can be single key or comma-separated list of keys)
+      - GEMINI_API_KEY_2 (fallback key if primary hits 429 quota)
+      - GEMINI_API_KEY_3
+      - GEMINI_API_KEYS (comma-separated list)
+    """
+    keys = []
+    candidates = [
+        os.environ.get("GEMINI_API_KEY"),
+        getattr(config, "GEMINI_API_KEY", None),
+        os.environ.get("GEMINI_API_KEY_2"),
+        getattr(config, "GEMINI_API_KEY_2", None),
+        os.environ.get("GEMINI_API_KEY_3"),
+        getattr(config, "GEMINI_API_KEY_3", None),
+        os.environ.get("GEMINI_API_KEYS"),
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        for k in str(c).split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+    return keys
+
+
+def _get_active_api_keys() -> list[str]:
+    """Returns active, non-cooldown keys first, followed by cooldown keys as fallback."""
+    keys = _get_api_keys()
+    now = time.time()
+    active = [k for k in keys if now >= _key_cooldowns.get(k, 0)]
+    cooldown = [k for k in keys if now < _key_cooldowns.get(k, 0)]
+    return active if active else cooldown
+
+
 def _get_api_key() -> str | None:
-    """Returns Gemini API key preferring the environment variable first."""
-    # Prefer explicit environment variable to avoid accidental commits of keys
-    key = os.environ.get("GEMINI_API_KEY") or config.GEMINI_API_KEY
-    if not key:
-        return None
-    try:
-        return key.strip()
-    except Exception:
-        return None
+    """Returns the first active, non-cooldown API key."""
+    active = _get_active_api_keys()
+    return active[0] if active else None
+
+
+def _mark_key_cooldown(key: str, seconds: int = 3600):
+    """Mark an API key as quota-exhausted (HTTP 429) for a cooldown duration (default 60 min)."""
+    global _key_cooldowns
+    _key_cooldowns[key] = time.time() + seconds
+    masked = (key[:6] + "..." + key[-4:]) if len(key) > 10 else "Key"
+    logger.warning(f"Gemini API key {masked} placed on quota cooldown for {seconds//60} mins.")
+
+
+def _is_quota_error(err_str: str) -> bool:
+    """Checks if error message is an HTTP 429 or quota limit exhaustion."""
+    s = str(err_str).lower()
+    return "429" in s or "quota" in s or "resource_exhausted" in s or "rate limit" in s
 
 
 def is_gemini_available() -> bool:
-    key = _get_api_key()
-    if not key:
+    keys = _get_api_keys()
+    if not keys:
         return False
     try:
         from google import genai as gai  # noqa
@@ -156,7 +205,8 @@ def is_gemini_available() -> bool:
 
 
 def get_gemini_model_name() -> str:
-    return config.GEMINI_MODEL if is_gemini_available() and _get_api_key() else "N/A"
+    key = _get_api_key()
+    return config.GEMINI_MODEL if is_gemini_available() and key else "N/A"
 
 
 # ─── Prompt Builder (same logic as ollama_advisor) ───────────
@@ -290,17 +340,18 @@ def get_signal(analysis: dict) -> dict:
             cached_sig["trading_window"] = window_reason
         return _enrich_signal(cached_sig, analysis)
 
-    # If in rate-limit cooldown, return confirmed rule signal
-    if now < _cooldown_until:
-        return rule_sig
-
-    key = _get_api_key()
+    # Check available Gemini API keys
+    available_keys = _get_active_api_keys()
     from datetime import datetime
     from zoneinfo import ZoneInfo
     ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
 
-    if not key:
-        logger.info("No Gemini API key — using confirmed rule-based trade signal.")
+    if not available_keys:
+        logger.info("No Gemini API key configured — using confirmed rule-based trade signal.")
+        return rule_sig
+
+    # If in rate-limit cooldown, return confirmed rule signal
+    if now < _cooldown_until:
         return rule_sig
 
     # ── User-requested Gemini pause ────────────────────────────
@@ -336,36 +387,50 @@ def get_signal(analysis: dict) -> dict:
             "Always respond with valid JSON only — no markdown, no extra text."
         )
 
-        # Try models in order (primary -> fallbacks)
+        # Try active API keys in priority order with model fallback
         last_err = None
-        for model_name in candidate_models:
-            try:
-                start = time.time()
-                content, sdk_used = _call_gemini_model(
-                    model_name=model_name,
-                    key=key,
-                    prompt=prompt,
-                    system_instruction=sys_instruction,
-                    json_mode=True,
-                )
-                elapsed = round(time.time() - start, 2)
-                logger.info(f"Gemini ({model_name} via {sdk_used}) response in {elapsed:.1f}s: {content[:80]}...")
-                signal = _parse_response(content, analysis)
-                signal["llm_model"] = model_name
-                signal["llm_inference_time"] = elapsed
-                _signal_cache[cache_key] = {"signal": signal, "time": time.time()}
-                _log_call({
-                    "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
-                    "model": model_name, "status": "SUCCESS", "prompt": prompt,
-                    "response_raw": content, "inference_time_sec": elapsed,
-                    "error": None, "parsed_signal": signal, "sdk_used": sdk_used,
-                })
-                return signal
-            except Exception as e:
-                last_err = str(e)
-                logger.warning(f"Gemini call with {model_name} failed: {e}. Trying next option...")
+        for key_idx, key in enumerate(available_keys):
+            masked_key = (key[:6] + "..." + key[-4:]) if len(key) > 10 else f"Key #{key_idx+1}"
+            hit_quota = False
+            for model_name in candidate_models:
+                try:
+                    start = time.time()
+                    content, sdk_used = _call_gemini_model(
+                        model_name=model_name,
+                        key=key,
+                        prompt=prompt,
+                        system_instruction=sys_instruction,
+                        json_mode=True,
+                    )
+                    elapsed = round(time.time() - start, 2)
+                    logger.info(f"Gemini ({model_name} via {sdk_used}, key {masked_key}) response in {elapsed:.1f}s: {content[:80]}...")
+                    signal = _parse_response(content, analysis)
+                    signal["llm_model"] = model_name
+                    signal["llm_inference_time"] = elapsed
+                    _signal_cache[cache_key] = {"signal": signal, "time": time.time()}
+                    _log_call({
+                        "id": _next_log_id(), "timestamp": ist_time, "symbol": symbol,
+                        "model": model_name, "status": "SUCCESS", "prompt": prompt,
+                        "response_raw": content, "inference_time_sec": elapsed,
+                        "error": None, "parsed_signal": signal, "sdk_used": f"{sdk_used} (key: {masked_key})",
+                    })
+                    return signal
+                except Exception as e:
+                    last_err = str(e)
+                    if _is_quota_error(last_err):
+                        logger.warning(f"Gemini key {masked_key} hit quota limit (429): {e}. Placing on cooldown & rotating to next key...")
+                        _mark_key_cooldown(key, seconds=3600)
+                        hit_quota = True
+                        break  # Stop trying other models on this exhausted key; advance to next key immediately!
+                    else:
+                        logger.warning(f"Gemini call with {model_name} using key {masked_key} failed: {e}. Trying next option...")
 
-        # All models exhausted — set 60s cooldown to protect quota
+            # If quota hit and another key is available, proceed immediately to next key
+            if hit_quota and (key_idx + 1 < len(available_keys)):
+                logger.info(f"Switching from exhausted key {masked_key} to next configured API key...")
+                continue
+
+        # All keys and models exhausted — set 60s cooldown to protect quota
         _last_error = last_err
         _last_error_time = time.time()
         _cooldown_until = time.time() + 60.0
@@ -493,9 +558,9 @@ def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> 
     from zoneinfo import ZoneInfo
     ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
 
-    key = _get_api_key()
-    if not key:
-        err_msg = "GEMINI_API_KEY is not set. Please set it in .env file or environment variable."
+    available_keys = _get_active_api_keys()
+    if not available_keys:
+        err_msg = "No Gemini API key is configured. Please set GEMINI_API_KEY in .env file or environment variable."
         entry = {
             "id": _next_log_id(),
             "timestamp": ist_time,
@@ -525,38 +590,51 @@ def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> 
     ]
 
     last_err = None
-    for model_name in candidate_models:
-        try:
-            start = time.time()
-            content, sdk_used = _call_gemini_model(
-                model_name=model_name,
-                key=key,
-                prompt=prompt,
-                system_instruction=(
-                    "You are an expert Indian stock market options trading assistant. "
-                    "Always respond in valid JSON format."
-                ),
-                json_mode=True,
-            )
-            elapsed = round(time.time() - start, 2)
-            entry = {
-                "id": _next_log_id(),
-                "timestamp": ist_time,
-                "symbol": symbol,
-                "model": model_name,
-                "status": "SUCCESS",
-                "prompt": prompt,
-                "response_raw": content,
-                "inference_time_sec": elapsed,
-                "error": None,
-                "parsed_signal": None,
-                "sdk_used": sdk_used,
-            }
-            _log_call(entry)
-            return {"status": "ok", "message": f"Test call successful via {sdk_used} ({model_name})", "entry": entry}
-        except Exception as e:
-            last_err = str(e)
-            logger.warning(f"Test call with {model_name} failed: {e}. Trying next option...")
+    for key_idx, key in enumerate(available_keys):
+        masked_key = (key[:6] + "..." + key[-4:]) if len(key) > 10 else f"Key #{key_idx+1}"
+        hit_quota = False
+        for model_name in candidate_models:
+            try:
+                start = time.time()
+                content, sdk_used = _call_gemini_model(
+                    model_name=model_name,
+                    key=key,
+                    prompt=prompt,
+                    system_instruction=(
+                        "You are an expert Indian stock market options trading assistant. "
+                        "Always respond in valid JSON format."
+                    ),
+                    json_mode=True,
+                )
+                elapsed = round(time.time() - start, 2)
+                entry = {
+                    "id": _next_log_id(),
+                    "timestamp": ist_time,
+                    "symbol": symbol,
+                    "model": model_name,
+                    "status": "SUCCESS",
+                    "prompt": prompt,
+                    "response_raw": content,
+                    "inference_time_sec": elapsed,
+                    "error": None,
+                    "parsed_signal": None,
+                    "sdk_used": f"{sdk_used} (key: {masked_key})",
+                }
+                _log_call(entry)
+                return {"status": "ok", "message": f"Test call successful via {sdk_used} ({model_name}) using key {masked_key}", "entry": entry}
+            except Exception as e:
+                last_err = str(e)
+                if _is_quota_error(last_err):
+                    logger.warning(f"Test call: Key {masked_key} hit quota limit (429): {e}. Placing on cooldown & trying next key...")
+                    _mark_key_cooldown(key, seconds=3600)
+                    hit_quota = True
+                    break
+                else:
+                    logger.warning(f"Test call with {model_name} using key {masked_key} failed: {e}. Trying next option...")
+
+        if hit_quota and (key_idx + 1 < len(available_keys)):
+            logger.info(f"Test call: switching from exhausted key {masked_key} to next configured API key...")
+            continue
 
     entry = {
         "id": _next_log_id(),
@@ -567,12 +645,12 @@ def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> 
         "prompt": prompt,
         "response_raw": None,
         "inference_time_sec": 0,
-        "error": last_err or "All candidate models failed",
+        "error": last_err or "All candidate models and API keys failed",
         "parsed_signal": None,
-        "sdk_used": "failed_all_sdks",
+        "sdk_used": "failed_all",
     }
     _log_call(entry)
-    return {"status": "error", "message": last_err or "All models failed", "entry": entry}
+    return {"status": "error", "message": f"Gemini test call failed across all keys/models: {last_err}", "entry": entry}
 
 
 
@@ -687,7 +765,10 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
 def _is_good_trading_window() -> tuple:
     """
     Returns (is_allowed, reason_str) based on IST time-of-day.
-    FULL DAY TRADING: 9:30 AM – 3:00 PM (all sessions, no midday break).
+    Trading schedule:
+      - Morning Session: 9:30 AM – 12:15 PM IST
+      - Midday Cooling Period: 12:15 PM – 1:30 PM IST (NO SIGNALS — low volume / sideways chop)
+      - Afternoon Session: 1:30 PM – 3:00 PM IST
     First 15 mins (9:15–9:30) skipped — opening auction noise / wide spreads.
     Trading stops strictly at 3:00 PM IST (all open trades square off).
     """
@@ -697,15 +778,21 @@ def _is_good_trading_window() -> tuple:
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
-    market_open  = 9 * 60 + 30   # 9:30 AM (skip first 15 min opening noise)
-    market_close = 15 * 60       # 3:00 PM (all trades auto square-off)
+    market_open   = 9 * 60 + 30    # 9:30 AM (skip first 15 min opening noise)
+    cooling_start = 12 * 60 + 15   # 12:15 PM IST (start of midday cooling period)
+    cooling_end   = 13 * 60 + 30   # 1:30 PM IST (end of midday cooling period)
+    market_close  = 15 * 60        # 3:00 PM (all trades auto square-off)
 
     if mins < market_open:
         wait = market_open - mins
         return False, f"Market opens at 9:30 AM IST ({wait} min away — opening noise filter)"
+    if cooling_start <= mins < cooling_end:
+        wait = cooling_end - mins
+        return False, f"Midday cooling period (12:15 PM–1:30 PM IST) — low volume / sideways chop ({wait} min remaining)"
     if mins < market_close:
         remaining = market_close - mins
-        return True, f"Market active 9:30 AM–3:00 PM IST ({remaining} min remaining)"
+        session = "Morning session" if mins < cooling_start else "Afternoon session"
+        return True, f"Market active ({session}, {remaining} min to 3:00 PM close)"
     return False, "Market closed (3:00 PM+ IST) — all positions squared off"
 
 
@@ -905,14 +992,23 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Capital Protection: Preserve ₹{config.USER_BUDGET_INR:,} budget — patience is profitable."
         )
 
-    # Detect midday-break WAIT to show a friendly message in the UI.
+    # Detect midday cooling period WAIT to show a friendly message in the UI.
     # This applies to ALL symbols regardless of bias score or loss count —
-    # if the trading window is blocked due to midday break, show the calm banner.
+    # if the trading window is blocked due to cooling period, show the calm banner.
     is_midday_break = (
         signal == "WAIT"
         and not window_ok
-        and "Midday break" in window_reason
+        and ("cooling period" in window_reason.lower() or "midday" in window_reason.lower())
     )
+
+    if is_midday_break:
+        reasoning = (
+            "☕ MIDDAY COOLING PERIOD (12:15 PM – 1:30 PM IST) — CAPITAL PROTECTION:\n"
+            "• No trade signals are generated during this cooling window.\n"
+            "• Low volumes, rapid option theta decay, and sideways chop typically occur at midday.\n"
+            "• Signals will resume for the afternoon session starting at 1:30 PM IST.\n"
+            f"• Current Status: {window_reason}"
+        )
 
     side = "call" if otype in ("CE", "NONE") else "put"
     bd = budget_advice.get(side, {})

@@ -387,7 +387,7 @@ def api_signal(symbol: str):
             "ta": analysis.get("ta"),
         },
         "last_refresh": datetime.fromtimestamp(last_refresh).strftime("%H:%M:%S") if last_refresh else "N/A",
-        "gemini_active": bool(config.GEMINI_API_KEY),
+        "gemini_active": bool(gemini_advisor._get_api_keys()),
     })
 
 
@@ -652,13 +652,15 @@ def api_gemini_status():
     """Check if Gemini API is configured and available."""
     available = is_gemini_available()
     model = get_gemini_model_name() if available else None
-    has_key = bool(config.GEMINI_API_KEY or os.environ.get('GEMINI_API_KEY', ''))
+    keys = gemini_advisor._get_api_keys()
+    has_key = bool(keys)
     last_err = get_last_error()
     return jsonify({
         "running": available and has_key,
         "model": model,
         "engine": "Google Gemini API (Free Tier)",
         "api_key_set": has_key,
+        "keys_count": len(keys),
         "last_error": last_err,
         "paused": is_gemini_paused(),
         "get_key_url": "https://aistudio.google.com/app/apikey",

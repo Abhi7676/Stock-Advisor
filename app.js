@@ -314,11 +314,11 @@ function renderSignal(sym, json) {
   const reasoningEl = document.getElementById(`${sym === "NIFTY" ? "nifty" : "bn"}Reasoning`);
   if (s.source === "midday_break") {
     reasoningEl.textContent =
-      "☕ MIDDAY BREAK (11:45 AM – 2:00 PM IST)\n" +
-      "• For your safety, no trade signals are generated during this period.\n" +
-      "• Reason: Market volumes are thin during midday, option premiums decay rapidly (theta), and false breakouts are common.\n" +
-      "• What to do: Review today's morning trades, relax, and get ready for the afternoon session which opens at 2:00 PM IST.\n" +
-      "• Afternoon Window: 2:00 PM – 3:00 PM — strong directional moves often happen in the last hour. Stay alert!";
+      "☕ MIDDAY COOLING PERIOD (12:15 PM – 1:30 PM IST)\n" +
+      "• For your safety, no trade signals are generated during this cooling period.\n" +
+      "• Reason: Market volumes are thin during midday, option premiums decay rapidly (theta decay), and false breakouts are common.\n" +
+      "• What to do: Review morning trades, relax, and get ready for the afternoon session which opens at 1:30 PM IST.\n" +
+      "• Afternoon Window: 1:30 PM – 3:00 PM — strong directional momentum often resumes after 1:30 PM. Stay alert!";
   } else {
     reasoningEl.textContent = s.reasoning || "—";
   }
@@ -354,16 +354,16 @@ function signalBoxClass(sig) {
 function signalMeta(s, sym) {
   if (s.source === "market_closed") {
     return {
-      cls: "wait", emoji: "\ud83c\udf19", label: "MARKET CLOSED",
-      subLabel: "NSE opens at 9:15 AM IST (Mon\u2013Fri)"
+      cls: "wait", emoji: "🌙", label: "MARKET CLOSED",
+      subLabel: "NSE opens at 9:15 AM IST (Mon–Fri)"
     };
   }
   if (s.source === "midday_break") {
     return {
       cls: "wait",
-      emoji: "\u2615",
-      label: "MIDDAY BREAK",
-      subLabel: "No signals 11:45 AM \u2013 2:00 PM \u2014 protecting your capital during low-volume hours"
+      emoji: "☕",
+      label: "COOLING PERIOD",
+      subLabel: "No signals 12:15 PM – 1:30 PM — low volume / sideways chop protection"
     };
   }
   if (s.signal === "BUY_CALL") return {

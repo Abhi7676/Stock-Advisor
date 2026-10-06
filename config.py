@@ -5,16 +5,18 @@ AI Engine: Google Gemini API (free tier — 1500 req/day)
 """
 import os
 from datetime import time
-from dotenv import load_dotenv
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # DB_PATH env var lets Render (or any host) point to a persistent disk.
 # On Render: set DB_PATH=/data/signals.sqlite (with 1GB persistent disk mounted at /data)
 # Locally: falls back to signals.sqlite next to this file.
 DB_FILE = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "signals.sqlite"))
 
-# Load environment variables from .env file
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+# Load environment variables from .env file (if python-dotenv installed)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+except ImportError:
+    pass
 
 # ─── NSE Indices ──────────────────────────────────────────
 INDICES = {
@@ -93,6 +95,8 @@ ENTRY_THRESHOLD = 4         # Minimum composite bias score (4 = selective, highe
 # Get your free API key from: https://aistudio.google.com/app/apikey
 # Standard production models have 1,500 requests/day & 15 req/min on free tier
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
+GEMINI_API_KEY_2 = os.environ.get("GEMINI_API_KEY_2", None)
+GEMINI_API_KEY_3 = os.environ.get("GEMINI_API_KEY_3", None)
 
 def _normalize_gemini_model(model_name: str | None) -> str:
     """Normalize model string to ensure valid, active Gemini model ID."""
