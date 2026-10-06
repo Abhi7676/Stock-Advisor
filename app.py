@@ -108,6 +108,10 @@ _cache = {
     "BANKNIFTY": {"data": None, "signal": None, "last_refresh": 0},
 }
 _cache_lock = threading.Lock()
+_refresh_lock = {
+    "NIFTY": threading.Lock(),
+    "BANKNIFTY": threading.Lock(),
+}
 
 
 def _is_fresh(symbol: str, ttl: int = config.NSE_REFRESH_INTERVAL) -> bool:
@@ -115,11 +119,15 @@ def _is_fresh(symbol: str, ttl: int = config.NSE_REFRESH_INTERVAL) -> bool:
 
 
 def _refresh(symbol: str, force: bool = False):
-    """Runs analysis + LLM signal generation and stores in cache."""
+    """Runs analysis + LLM signal generation and stores in cache. Thread-safe & non-blocking."""
     if not force and _is_fresh(symbol):
         return
-    logger.info(f"Refreshing analysis for {symbol}...")
+    lock = _refresh_lock.get(symbol)
+    if not lock or not lock.acquire(blocking=False):
+        # Refresh already underway for this symbol — avoid duplicate concurrent requests
+        return
     try:
+        logger.info(f"Refreshing analysis for {symbol}...")
         analysis = analyze_index(symbol)
         signal = get_signal(analysis)
         with _cache_lock:
@@ -129,13 +137,20 @@ def _refresh(symbol: str, force: bool = False):
         _log_trade_signal(symbol, signal, analysis)
     except Exception as e:
         logger.error(f"Refresh failed for {symbol}: {e}")
+    finally:
+        lock.release()
 
 
 def _background_refresh():
-    """Background thread that keeps cache warm during market hours."""
+    """Background thread that keeps cache warm during market hours with staggered requests."""
+    time.sleep(1)  # Brief pause on startup so web server binds and listens instantly
     while True:
         for sym in ["NIFTY", "BANKNIFTY"]:
-            _refresh(sym)
+            try:
+                _refresh(sym)
+            except Exception as e:
+                logger.error(f"Background refresh error for {sym}: {e}")
+            time.sleep(2)  # Stagger indices by 2s so they don't hammer NSE/Yahoo simultaneously
         time.sleep(config.NSE_REFRESH_INTERVAL)
 
 
@@ -357,20 +372,21 @@ def route_gemini_monitor():
 
 @app.route("/api/signal/<symbol>", methods=["GET"])
 def api_signal(symbol: str):
-    """Returns AI-generated CALL/PUT signal for NIFTY or BANKNIFTY."""
+    """Returns AI-generated CALL/PUT signal for NIFTY or BANKNIFTY without blocking worker."""
     symbol = symbol.upper()
     if symbol not in config.INDICES:
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 404
 
     force = request.args.get("refresh", "false").lower() == "true"
-    _refresh(symbol, force=force)
+    if force or not _is_fresh(symbol):
+        threading.Thread(target=_refresh, args=(symbol, force), daemon=True).start()
 
     with _cache_lock:
         signal = _cache[symbol]["signal"]
         analysis = _cache[symbol]["data"]
         last_refresh = _cache[symbol]["last_refresh"]
 
-    if not signal:
+    if not signal or not analysis:
         return jsonify({"error": "Signal not ready yet, please try again"}), 503
 
     return jsonify({
@@ -386,19 +402,21 @@ def api_signal(symbol: str):
             "preliminary_bias": analysis.get("preliminary_bias"),
             "ta": analysis.get("ta"),
         },
-        "last_refresh": datetime.fromtimestamp(last_refresh).strftime("%H:%M:%S") if last_refresh else "N/A",
+        "last_refresh": datetime.fromtimestamp(last_refresh, _IST).strftime("%H:%M:%S") if last_refresh else "N/A",
         "gemini_active": bool(gemini_advisor._get_api_keys()),
     })
 
 
 @app.route("/api/options-chain/<symbol>", methods=["GET"])
 def api_options_chain(symbol: str):
-    """Returns live options chain around ATM."""
+    """Returns live options chain around ATM without blocking worker."""
     symbol = symbol.upper()
     if symbol not in config.INDICES:
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 404
 
-    _refresh(symbol)
+    if not _is_fresh(symbol):
+        threading.Thread(target=_refresh, args=(symbol,), daemon=True).start()
+
     with _cache_lock:
         analysis = _cache[symbol]["data"]
 
@@ -426,7 +444,8 @@ def api_market_pulse():
     """Summary of both indices for the dashboard overview."""
     result = {}
     for sym in ["NIFTY", "BANKNIFTY"]:
-        _refresh(sym)
+        if not _is_fresh(sym):
+            threading.Thread(target=_refresh, args=(sym,), daemon=True).start()
         with _cache_lock:
             a = _cache[sym]["data"]
             s = _cache[sym]["signal"]
@@ -446,9 +465,9 @@ def api_market_pulse():
                 "signal": s["signal"],
                 "confidence": s["confidence"],
                 "option_type": s["option_type"],
-                "ta_rsi": a["ta"]["rsi"],
-                "ta_macd_bias": a["ta"]["macd_bias"],
-                "supertrend": a["ta"]["supertrend_signal"],
+                "ta_rsi": a["ta"]["rsi"] if a.get("ta") else 50,
+                "ta_macd_bias": a["ta"]["macd_bias"] if a.get("ta") else "NEUTRAL",
+                "supertrend": a["ta"]["supertrend_signal"] if a.get("ta") else "NEUTRAL",
                 "nearest_expiry": a["nearest_expiry"],
                 "data_source": a["data_source"],
             }
@@ -768,13 +787,9 @@ def static_files(path):
 
 # ─── Startup ──────────────────────────────────────────────────────────────────
 
-# Initialize DB and start background threads at import time
-# (works for both `python app.py` and gunicorn)
+# Initialize DB and start single background refresh loop at import time
 _init_db()
-logger.info("Starting initial data fetch for Nifty & BankNifty...")
-for _sym in ["NIFTY", "BANKNIFTY"]:
-    _t = threading.Thread(target=_refresh, args=(_sym, True), daemon=True)
-    _t.start()
+logger.info("Starting background market refresh thread for Nifty & BankNifty...")
 _bg = threading.Thread(target=_background_refresh, daemon=True)
 _bg.start()
 
