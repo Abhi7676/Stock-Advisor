@@ -81,6 +81,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 import config
+import gemini_advisor
 from analysis_engine import analyze_index
 from gemini_advisor import (
     get_signal,
