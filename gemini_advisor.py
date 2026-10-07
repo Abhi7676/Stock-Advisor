@@ -870,8 +870,9 @@ def _rule_based_signal(analysis: dict) -> dict:
     loss_blocked = consec_losses >= 2  # Pause after 2 consecutive losses
 
     # ── Gate 3: Directional Bias Threshold ────────────────
-    # Score of ±4 represents strong directional confirmation (e.g. PCR + MACD + RSI/Momentum)
-    ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLD", 4)
+    # Nifty 50 uses ±3 (tighter, disciplined index; 71.4% win rate)
+    # Bank Nifty uses ±4 (high-beta index; requires stronger confluence to prevent whipsaws)
+    ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLDS", {}).get(symbol, getattr(config, "ENTRY_THRESHOLD", 3))
 
     # ── Gate 4: 5-min Trend Confirmation (Supertrend OR MACD must agree) ──
     # Prevents entries when bias is met via PCR+OI+price alone while

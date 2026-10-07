@@ -86,10 +86,11 @@ USER_BUDGET_INR = 10000
 RISK_PER_TRADE_PCT = 0.5    # Max 50% of budget in one trade = ₹5000
 PROFIT_TARGET_PCT = 0.13    # Target 13% on premium — closes trade when 13% profit is made
 STOP_LOSS_PCT = 0.08        # Stop at 8% loss on premium (tight capital protection)
-ENTRY_THRESHOLD = 4         # Minimum composite bias score (4 = selective, higher conviction)
-                            # 3 → fires when 3+ indicators align (PCR + OI + 1 technical)
-                            # 4 → more selective, fewer signals but higher conviction
-                            # 5 → ultra-selective, rarely fires (not recommended for testing)
+ENTRY_THRESHOLD = 3         # Default composite bias score
+ENTRY_THRESHOLDS = {
+    "NIFTY": 3,             # Nifty 50: ±3 score fires high-conviction trades (proven 71.4% win rate)
+    "BANKNIFTY": 4,         # Bank Nifty: ±4 score required (high-beta index, avoids whipsaw losses)
+}
 
 # ─── Google Gemini API Settings (Free Tier) ──────────────────
 # Get your free API key from: https://aistudio.google.com/app/apikey

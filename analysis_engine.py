@@ -44,8 +44,8 @@ def analyze_index(symbol: str) -> dict:
     # ── 4. OI Buildup Analysis ─────────────────────────────
     oi_analysis = _analyze_oi_buildup(chain, atm_strike, symbol)
 
-    # ── 5. Technical Indicators (5-min primary) ────────────
-    candles = get_index_candles(symbol, interval="5m", period="1d")
+    # ── 5. Technical Indicators (5-min primary, 5-day lookback) ─
+    candles = get_index_candles(symbol, interval="5m", period="5d")
     ta_signals = _compute_ta(candles)
 
     # ── 5b. 15-min Trend Confirmation (multi-day) ──────────
@@ -74,7 +74,7 @@ def analyze_index(symbol: str) -> dict:
 
     # ── 10. Composite Bias ─────────────────────────────────
     bias_score, bias_factors = _compute_composite_bias(
-        pcr_signal, oi_analysis, ta_signals, quote
+        pcr_signal, oi_analysis, ta_signals, quote, symbol
     )
 
     return {
@@ -175,11 +175,13 @@ def _analyze_oi_buildup(chain: list, atm_strike: int, symbol: str) -> dict:
     call_additions = sum(r["call_chg_oi"] for r in above_atm if r["call_chg_oi"] > 0)
     put_additions = sum(r["put_chg_oi"] for r in below_atm if r["put_chg_oi"] > 0)
 
-    # Determine OI bias
+    # Determine OI bias:
+    # Institutional Put writing = Bullish support floor
+    # Institutional Call writing = Bearish resistance ceiling
     if put_additions > call_additions * 1.3:
-        oi_bias = "BEARISH"  # More puts being added — bears active
+        oi_bias = "BULLISH"  # Heavy Put writing added — support holding
     elif call_additions > put_additions * 1.3:
-        oi_bias = "BULLISH"  # More calls being added — bulls active
+        oi_bias = "BEARISH"  # Heavy Call writing added — resistance capping
     else:
         oi_bias = "NEUTRAL"
 
@@ -449,7 +451,7 @@ def _budget_advice(atm_info: dict, symbol: str) -> dict:
 
 # ─── Composite Bias Score ─────────────────────────────────────────────────────
 
-def _compute_composite_bias(pcr_signal, oi_analysis, ta, quote) -> tuple:
+def _compute_composite_bias(pcr_signal, oi_analysis, ta, quote, symbol: str = "NIFTY") -> tuple:
     """
     Returns a score from -10 (very bearish) to +10 (very bullish)
     by aggregating signals from PCR, OI, technicals, and price action.
@@ -503,16 +505,17 @@ def _compute_composite_bias(pcr_signal, oi_analysis, ta, quote) -> tuple:
     factors.append({"factor": "SUPERTREND", "signal": st, "points": st_pts, "desc": f"Supertrend {ta.get('supertrend_trend','')}"})
     score += st_pts
 
-    # Price momentum
+    # Price momentum calibrated by index (Nifty moves 0.3-0.5%, BankNifty moves 0.6-1.5%)
     change_pct = float(quote.get("change_pct", 0))
-    if change_pct > 0.5:
+    mom_thresh = 0.30 if symbol == "NIFTY" else 0.50
+    if change_pct >= mom_thresh:
         score += 1
-        factors.append({"factor": "PRICE_MOMENTUM", "signal": "POSITIVE", "points": 1, "desc": f"Up {change_pct:.2f}% today"})
-    elif change_pct < -0.5:
+        factors.append({"factor": "PRICE_MOMENTUM", "signal": "POSITIVE", "points": 1, "desc": f"Up {change_pct:+.2f}% today (≥{mom_thresh}%)"})
+    elif change_pct <= -mom_thresh:
         score -= 1
-        factors.append({"factor": "PRICE_MOMENTUM", "signal": "NEGATIVE", "points": -1, "desc": f"Down {abs(change_pct):.2f}% today"})
+        factors.append({"factor": "PRICE_MOMENTUM", "signal": "NEGATIVE", "points": -1, "desc": f"Down {change_pct:+.2f}% today (≤-{mom_thresh}%)"})
     else:
-        factors.append({"factor": "PRICE_MOMENTUM", "signal": "FLAT", "points": 0, "desc": "Flat day"})
+        factors.append({"factor": "PRICE_MOMENTUM", "signal": "FLAT", "points": 0, "desc": f"Within range ({change_pct:+.2f}%)"})
 
     return round(score, 1), factors
 
