@@ -341,7 +341,7 @@ function renderSignal(sym, json) {
   const biasScoreId = sym === "NIFTY" ? "niftyBiasScore" : "bnBiasScore";
   const biasMarkerId = sym === "NIFTY" ? "niftyBiasMarker" : "bnBiasMarker";
   document.getElementById(biasScoreId).textContent = `${bias > 0 ? "+" : ""}${bias}`;
-  const pct = ((bias + 10) / 20) * 100; // map -10..+10 → 0..100%
+  const pct = ((bias + 5) / 10) * 100; // map -5..+5 → 0..100%
   document.getElementById(biasMarkerId).style.left = `${Math.max(5, Math.min(95, pct))}%`;
 }
 

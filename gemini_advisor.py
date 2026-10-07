@@ -270,7 +270,7 @@ TECHNICAL INDICATORS (5-min):
 
 KEY LEVELS: Support ₹{support} | Resistance ₹{resistance}
 
-COMPOSITE SIGNAL (score {bias_score:+}/±10):
+COMPOSITE SIGNAL (score {bias_score:+}/±5):
 {factor_lines}
 
 ATM PREMIUMS ({expiry}):
@@ -889,8 +889,8 @@ def _rule_based_signal(analysis: dict) -> dict:
     loss_blocked = consec_losses >= 2  # Pause after 2 consecutive losses
 
     # ── Gate 3: Directional Bias Threshold ────────────────
-    # Nifty 50 uses ±3 (tighter, disciplined index; 71.4% win rate)
-    # Bank Nifty uses ±5 (high-beta index; whipsaws badly — need ALL factors aligned)
+    # Nifty 50 uses ±3 (scale: -5 to +5)
+    # Bank Nifty uses ±4 (scale: -5 to +5)
     ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLDS", {}).get(symbol, getattr(config, "ENTRY_THRESHOLD", 3))
 
     # ── Gate 4: 5-min Trend Confirmation (BOTH Supertrend AND MACD must agree) ──
@@ -960,13 +960,12 @@ def _rule_based_signal(analysis: dict) -> dict:
     trend_15m_reason_bull = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
     trend_15m_reason_bear = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
 
-    # All gates must pass for a BUY signal (now 8 gates including RSI alignment)
     if (bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked
             and trend_ok_bull and rsi_ok_bull and vix_ok and max_pain_ok and trend_15m_bull):
-        signal, otype, confidence = "BUY_CALL", "CE", min(99, 75 + bias_score * 6)
+        signal, otype, confidence = "BUY_CALL", "CE", min(98, int(70 + bias_score * 5.5))
         reasoning = (
             f"WHY BUY CALL (CE) — ALL 8 GATES PASSED:\n"
-            f"• Bias Score: {bias_score:+}/±10 (threshold ≥{ENTRY_THRESHOLD} met)\n"
+            f"• Bias Score: {bias_score:+}/±5 (threshold ≥{ENTRY_THRESHOLD} met)\n"
             f"• 5-min Trend ✅: Supertrend={st_signal} AND MACD={macd_bias} (both agree)\n"
             f"• RSI Alignment ✅: {rsi_reason_bull}\n"
             f"• 15-min Trend ✅: {trend_15m_reason_bull}\n"
@@ -982,10 +981,10 @@ def _rule_based_signal(analysis: dict) -> dict:
         )
     elif (bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked
             and trend_ok_bear and rsi_ok_bear and vix_ok and max_pain_ok and trend_15m_bear):
-        signal, otype, confidence = "BUY_PUT", "PE", min(99, 75 + abs(bias_score) * 6)
+        signal, otype, confidence = "BUY_PUT", "PE", min(98, int(70 + abs(bias_score) * 5.5))
         reasoning = (
             f"WHY BUY PUT (PE) — ALL 8 GATES PASSED:\n"
-            f"• Bias Score: {bias_score:+}/±10 (threshold ≤-{ENTRY_THRESHOLD} met)\n"
+            f"• Bias Score: {bias_score:+}/±5 (threshold ≤-{ENTRY_THRESHOLD} met)\n"
             f"• 5-min Trend ✅: Supertrend={st_signal} AND MACD={macd_bias} (both agree)\n"
             f"• RSI Alignment ✅: {rsi_reason_bear}\n"
             f"• 15-min Trend ✅: {trend_15m_reason_bear}\n"
@@ -1004,7 +1003,7 @@ def _rule_based_signal(analysis: dict) -> dict:
         # Build specific WAIT reason — list every gate that failed
         wait_reasons = []
         if abs(bias_score) < ENTRY_THRESHOLD:
-            wait_reasons.append(f"Weak signal (bias {bias_score:+}, need ≥{ENTRY_THRESHOLD} or ≤-{ENTRY_THRESHOLD})")
+            wait_reasons.append(f"Weak signal (bias {bias_score:+}/±5, need ≥{ENTRY_THRESHOLD} or ≤-{ENTRY_THRESHOLD})")
         if bias_score >= ENTRY_THRESHOLD and not trend_ok_bull:
             wait_reasons.append(f"5-min trend split: Supertrend={st_signal} & MACD={macd_bias} — need BOTH to agree for BUY CALL")
         if bias_score <= -ENTRY_THRESHOLD and not trend_ok_bear:

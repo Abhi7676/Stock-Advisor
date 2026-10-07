@@ -113,7 +113,7 @@ def analyze_index(symbol: str) -> dict:
         # Budget info
         "budget_advice": _budget_advice(atm_info, symbol),
         # Composite signal
-        "bias_score": bias_score,      # -10 (strong bearish) to +10 (strong bullish)
+        "bias_score": bias_score,      # -5 (strong bearish) to +5 (strong bullish)
         "bias_factors": bias_factors,
         "preliminary_bias": (
             "BULLISH" if bias_score >= 2 else
@@ -453,71 +453,75 @@ def _budget_advice(atm_info: dict, symbol: str) -> dict:
 
 def _compute_composite_bias(pcr_signal, oi_analysis, ta, quote, symbol: str = "NIFTY") -> tuple:
     """
-    Returns a score from -10 (very bearish) to +10 (very bullish)
+    Returns a score from -5 (very bearish) to +5 (very bullish)
     by aggregating signals from PCR, OI, technicals, and price action.
     """
     score = 0
     factors = []
 
-    # PCR contribution
+    # PCR contribution (max ±1)
     pcr_map = {
-        "STRONG_BULLISH": (+3, "PCR strongly bullish (>1.4)"),
-        "BULLISH": (+2, "PCR bullish (1.1-1.4)"),
+        "STRONG_BULLISH": (+1, "PCR strongly bullish (>1.4)"),
+        "BULLISH": (+1, "PCR bullish (1.1-1.4)"),
         "NEUTRAL_BULLISH": (+1, "PCR slightly bullish"),
         "NEUTRAL": (0, "PCR neutral"),
         "NEUTRAL_BEARISH": (-1, "PCR slightly bearish"),
-        "BEARISH": (-2, "PCR bearish (<0.9)"),
-        "STRONG_BEARISH": (-3, "PCR very bearish (<0.7)"),
+        "BEARISH": (-1, "PCR bearish (<0.9)"),
+        "STRONG_BEARISH": (-1, "PCR very bearish (<0.7)"),
     }
     pcr_pts, pcr_desc = pcr_map.get(pcr_signal, (0, "PCR neutral"))
     score += pcr_pts
     factors.append({"factor": "PCR", "signal": pcr_signal, "points": pcr_pts, "desc": pcr_desc})
 
-    # OI contribution
+    # OI contribution (max ±1)
     oi_bias = oi_analysis.get("oi_bias", "NEUTRAL")
-    oi_map = {"BULLISH": (+2, "OI buildup bullish"), "BEARISH": (-2, "OI buildup bearish"), "NEUTRAL": (0, "OI neutral")}
+    oi_map = {"BULLISH": (+1, "OI buildup bullish"), "BEARISH": (-1, "OI buildup bearish"), "NEUTRAL": (0, "OI neutral")}
     oi_pts, oi_desc = oi_map.get(oi_bias, (0, "OI neutral"))
     score += oi_pts
     factors.append({"factor": "OI_BUILDUP", "signal": oi_bias, "points": oi_pts, "desc": oi_desc})
 
-    # RSI contribution
+    # RSI contribution (max ±1)
     rsi_sig = ta.get("rsi_signal", "NEUTRAL")
     rsi_map = {
-        "OVERSOLD": (+2, "RSI oversold — bounce likely"),
+        "OVERSOLD": (+1, "RSI oversold — bounce likely"),
         "BULLISH_MOMENTUM": (+1, "RSI showing bullish momentum"),
         "NEUTRAL": (0, "RSI neutral"),
         "BEARISH_MOMENTUM": (-1, "RSI showing bearish momentum"),
-        "OVERBOUGHT": (-2, "RSI overbought — correction risk"),
+        "OVERBOUGHT": (-1, "RSI overbought — correction risk"),
     }
     rsi_pts, rsi_desc = rsi_map.get(rsi_sig, (0, "RSI neutral"))
     score += rsi_pts
     factors.append({"factor": "RSI", "signal": rsi_sig, "points": rsi_pts, "desc": rsi_desc})
 
-    # MACD contribution
+    # MACD contribution (max ±1)
     macd_bias = ta.get("macd_bias", "NEUTRAL")
     macd_pts = +1 if macd_bias == "BULLISH" else -1 if macd_bias == "BEARISH" else 0
     factors.append({"factor": "MACD", "signal": macd_bias, "points": macd_pts, "desc": f"MACD {macd_bias.lower()}"})
     score += macd_pts
 
-    # Supertrend contribution
+    # Supertrend contribution (max ±1)
     st = ta.get("supertrend_signal", "NEUTRAL")
     st_pts = +1 if st == "BUY" else -1 if st == "SELL" else 0
     factors.append({"factor": "SUPERTREND", "signal": st, "points": st_pts, "desc": f"Supertrend {ta.get('supertrend_trend','')}"})
     score += st_pts
 
-    # Price momentum calibrated by index (Nifty moves 0.3-0.5%, BankNifty moves 0.6-1.5%)
+    # Price momentum calibrated by index (Nifty moves 0.3-0.5%, BankNifty moves 0.6-1.5%) (max ±1)
     change_pct = float(quote.get("change_pct", 0))
     mom_thresh = 0.30 if symbol == "NIFTY" else 0.50
     if change_pct >= mom_thresh:
-        score += 1
+        mom_pts = 1
         factors.append({"factor": "PRICE_MOMENTUM", "signal": "POSITIVE", "points": 1, "desc": f"Up {change_pct:+.2f}% today (≥{mom_thresh}%)"})
     elif change_pct <= -mom_thresh:
-        score -= 1
+        mom_pts = -1
         factors.append({"factor": "PRICE_MOMENTUM", "signal": "NEGATIVE", "points": -1, "desc": f"Down {change_pct:+.2f}% today (≤-{mom_thresh}%)"})
     else:
+        mom_pts = 0
         factors.append({"factor": "PRICE_MOMENTUM", "signal": "FLAT", "points": 0, "desc": f"Within range ({change_pct:+.2f}%)"})
+    score += mom_pts
 
-    return round(score, 1), factors
+    # Strictly clamp to [-5, +5] scale
+    final_score = int(max(-5, min(5, score)))
+    return final_score, factors
 
 
 # ─── Chain Summary for UI ─────────────────────────────────────────────────────
