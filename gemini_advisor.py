@@ -60,11 +60,19 @@ def get_gemini_call_logs(limit: int = 50) -> list:
         return list(_call_logs[:limit])
 
 
+def _get_ist_now():
+    """Returns current datetime in IST, with fallback if tzdata is missing on Windows."""
+    from datetime import datetime, timezone, timedelta
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Kolkata"))
+    except Exception:
+        return datetime.now(timezone(timedelta(hours=5, minutes=30)))
+
+
 def _is_market_open() -> bool:
     """Returns True if current IST time is within NSE trading hours (9:15–15:00) on a weekday."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    now = _get_ist_now()
     day = now.weekday()  # 0=Mon, 6=Sun
     if day >= 5:  # Weekend
         return False
@@ -342,9 +350,7 @@ def get_signal(analysis: dict) -> dict:
 
     # Check available Gemini API keys
     available_keys = _get_active_api_keys()
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+    ist_time = _get_ist_now().strftime("%Y-%m-%d %H:%M:%S IST")
 
     if not available_keys:
         logger.info("No Gemini API key configured — using confirmed rule-based trade signal.")
@@ -554,9 +560,7 @@ def _call_gemini_model(
 
 def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> dict:
     """Executes an interactive test call to verify Gemini API Key and logs full query & answer."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    ist_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S IST")
+    ist_time = _get_ist_now().strftime("%Y-%m-%d %H:%M:%S IST")
 
     available_keys = _get_active_api_keys()
     if not available_keys:
@@ -772,9 +776,7 @@ def _is_good_trading_window() -> tuple:
     First 15 mins (9:15–9:30) skipped — opening auction noise / wide spreads.
     Trading stops strictly at 3:00 PM IST (all open trades square off).
     """
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    now = _get_ist_now()
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
@@ -804,9 +806,7 @@ _loss_tracker_date = None
 def _get_today_date_ist() -> str:
     """Returns today's date in IST (YYYY-MM-DD)."""
     try:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d")
+        return _get_ist_now().strftime("%Y-%m-%d")
     except Exception:
         import time as _t
         return _t.strftime("%Y-%m-%d")
@@ -898,16 +898,20 @@ def _rule_based_signal(analysis: dict) -> dict:
     )
 
     # ── Gate 6: Max Pain Pinning Filter ────────────────────
-    # When spot is within 0.20% of max pain, market makers actively
-    # defend that level and directional moves stall → skip.
-    MAX_PAIN_MIN_DIST_PCT = 0.20
-    max_pain_ok = max_pain_dist_pct >= MAX_PAIN_MIN_DIST_PCT
+    # Max pain pinning happens when the market is indecisive/flat near a strike.
+    # When strong directional conviction exists (|bias_score| >= ENTRY_THRESHOLD),
+    # price regularly breaks out right through max pain with heavy momentum.
+    # We allow the trade if directional bias is confirmed (score >= ENTRY_THRESHOLD),
+    # or if spot is safely away from max pain (>0.05%).
+    is_strong_conviction = abs(bias_score) >= ENTRY_THRESHOLD
+    max_pain_ok = is_strong_conviction or (max_pain_dist_pct >= 0.05)
     max_pain_reason = (
-        f"Spot too close to Max Pain ({analysis.get('max_pain',0)}) — "
-        f"only {max_pain_dist_pct:.2f}% away (need >{MAX_PAIN_MIN_DIST_PCT}%), "
-        f"market makers will pin price here"
-        if not max_pain_ok else
+        f"Max Pain distance {max_pain_dist_pct:.2f}% ✅ (strong conviction bias {bias_score:+} overrides consolidation)"
+        if is_strong_conviction else
         f"Max Pain distance {max_pain_dist_pct:.2f}% ✅ (safe)"
+        if max_pain_ok else
+        f"Spot too close to Max Pain ({analysis.get('max_pain',0)}) — "
+        f"only {max_pain_dist_pct:.2f}% away, market makers may pin price here"
     )
 
     # ── Gate 7: 15-min Trend Anti-Conflict Check (softened) ─
