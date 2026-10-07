@@ -101,7 +101,7 @@ STOP_LOSS_PCT = 0.08        # Stop at 8% loss on premium (tight capital protecti
 ENTRY_THRESHOLD = 3         # Default composite bias score
 ENTRY_THRESHOLDS = {
     "NIFTY": 3,             # Nifty 50: ±3 score fires high-conviction trades (proven 71.4% win rate)
-    "BANKNIFTY": 4,         # Bank Nifty: ±4 score required (high-beta index, avoids whipsaw losses)
+    "BANKNIFTY": 5,         # Bank Nifty: ±5 required — high-beta index whipsaws hard, need all 5 factors aligned
 }
 
 # ─── Google Gemini API Settings (Free Tier) ──────────────────

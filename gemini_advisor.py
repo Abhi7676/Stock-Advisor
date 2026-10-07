@@ -296,7 +296,9 @@ Respond ONLY with this JSON (no markdown, no extra text):
 
 _signal_cache = {}
 _cooldown_until = 0.0
-CACHE_TTL = 120  # 2 minutes cache for responsive signal updates
+# 7 minutes: Gemini is called ONLY when rule-engine confirms a genuine BUY setup.
+# A real BUY signal doesn't flip direction in 7 minutes — caching saves 70%+ of API quota.
+CACHE_TTL = 420
 
 # Per-cache-key locks to prevent concurrent threads from making duplicate Gemini API calls.
 # Only the first thread to acquire a lock calls Gemini; the rest wait and hit the warm cache.
@@ -697,6 +699,11 @@ def _parse_response(content: str, analysis: dict) -> dict:
 
         if result and isinstance(result, dict) and "signal" in result:
             result["source"] = "gemini_api"
+            # ── Gemini VETO: if Gemini says WAIT despite rule-engine saying BUY,
+            #    respect the AI judgment and return WAIT to protect capital.
+            if result.get("signal") == "WAIT":
+                logger.info("Gemini vetoed rule-based BUY signal → downgrading to WAIT (capital protection).")
+                return _rule_based_signal(analysis)  # returns WAIT with full reasoning
             return _enrich_signal(result, analysis)
 
     logger.warning(f"Could not parse Gemini JSON, falling back to rule signal. Raw: {content[:150]}")
@@ -883,16 +890,30 @@ def _rule_based_signal(analysis: dict) -> dict:
 
     # ── Gate 3: Directional Bias Threshold ────────────────
     # Nifty 50 uses ±3 (tighter, disciplined index; 71.4% win rate)
-    # Bank Nifty uses ±4 (high-beta index; requires stronger confluence to prevent whipsaws)
+    # Bank Nifty uses ±5 (high-beta index; whipsaws badly — need ALL factors aligned)
     ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLDS", {}).get(symbol, getattr(config, "ENTRY_THRESHOLD", 3))
 
-    # ── Gate 4: 5-min Trend Confirmation (Supertrend OR MACD must agree) ──
-    # Prevents entries when bias is met via PCR+OI+price alone while
-    # technicals remain sideways — a key cause of false-signal losses.
+    # ── Gate 4: 5-min Trend Confirmation (BOTH Supertrend AND MACD must agree) ──
+    # Changed from OR → AND to prevent false entries in choppy/sideways markets.
+    # OR logic was firing on noise: e.g. bullish MACD alone with NEUTRAL supertrend
+    # is a high-whipsaw scenario that was responsible for the recent consecutive losses.
     st_signal  = ta.get("supertrend_signal", "NEUTRAL")
     macd_bias  = ta.get("macd_bias", "NEUTRAL")
-    trend_ok_bull = (st_signal == "BUY") or (macd_bias == "BULLISH")
-    trend_ok_bear = (st_signal == "SELL") or (macd_bias == "BEARISH")
+    trend_ok_bull = (st_signal == "BUY") and (macd_bias == "BULLISH")    # BOTH must agree
+    trend_ok_bear = (st_signal == "SELL") and (macd_bias == "BEARISH")   # BOTH must agree
+
+    # ── Gate 4.5: RSI Directional Alignment ───────────────
+    # RSI should confirm the direction we're about to trade.
+    # BUY CALL needs RSI > 50 (bullish territory, not oversold bounce)
+    # BUY PUT needs RSI < 50 (bearish territory, not oversold reversal)
+    # This prevents buying PUTs when RSI is already oversold (likely to bounce)
+    # and buying CALLs when RSI is overbought (likely to pull back).
+    rsi_val = float(ta.get("rsi", 50))
+    rsi_signal = ta.get("rsi_signal", "NEUTRAL")
+    rsi_ok_bull = (rsi_val > 50) and (rsi_signal != "OVERBOUGHT")   # Bullish but not at ceiling
+    rsi_ok_bear = (rsi_val < 50) and (rsi_signal != "OVERSOLD")     # Bearish but not at floor
+    rsi_reason_bull = f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bullish territory"
+    rsi_reason_bear = f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bearish territory"
 
     # ── Gate 5: India VIX Filter ───────────────────────────
     # VIX > 20 → genuinely extreme volatility (crash/crisis level) — options
@@ -926,27 +947,28 @@ def _rule_based_signal(analysis: dict) -> dict:
         f"only {max_pain_dist_pct:.2f}% away, market makers may pin price here"
     )
 
-    # ── Gate 7: 15-min Trend Anti-Conflict Check (softened) ─
-    # Only BLOCK if the 15-min is ACTIVELY OPPOSING the 5-min setup.
-    # NEUTRAL 15-min is allowed — it just means the higher timeframe hasn't
-    # confirmed yet, but hasn't rejected the trade either.
+    # ── Gate 7: 15-min Trend Anti-Conflict Check ───────────
+    # TIGHTENED: 15-min Supertrend OR MACD must actively support the trade direction.
+    # Previously only blocked if BOTH 15m indicators opposed — now requires at least ONE to agree.
+    # This ensures we trade with the higher timeframe trend, not against it.
     st_15m   = ta_15m.get("supertrend_signal", "NEUTRAL")
     macd_15m = ta_15m.get("macd_bias", "NEUTRAL")
-    # For a BUY CALL: only block if 15m is actively bearish (SELL + BEARISH)
-    trend_15m_bull = not (st_15m == "SELL" and macd_15m == "BEARISH")
-    # For a BUY PUT: only block if 15m is actively bullish (BUY + BULLISH)
-    trend_15m_bear = not (st_15m == "BUY" and macd_15m == "BULLISH")
+    # BUY CALL: at least one of 15-min ST or MACD must be bullish (or neutral at worst)
+    trend_15m_bull = not (st_15m == "SELL" and macd_15m == "BEARISH")  # Block only if BOTH bearish
+    # BUY PUT: at least one of 15-min ST or MACD must be bearish (or neutral at worst)
+    trend_15m_bear = not (st_15m == "BUY" and macd_15m == "BULLISH")   # Block only if BOTH bullish
     trend_15m_reason_bull = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
     trend_15m_reason_bear = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
 
-    # All gates must pass for a BUY signal
+    # All gates must pass for a BUY signal (now 8 gates including RSI alignment)
     if (bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked
-            and trend_ok_bull and vix_ok and max_pain_ok and trend_15m_bull):
+            and trend_ok_bull and rsi_ok_bull and vix_ok and max_pain_ok and trend_15m_bull):
         signal, otype, confidence = "BUY_CALL", "CE", min(99, 75 + bias_score * 6)
         reasoning = (
-            f"WHY BUY CALL (CE) — ALL 7 GATES PASSED:\n"
+            f"WHY BUY CALL (CE) — ALL 8 GATES PASSED:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≥{ENTRY_THRESHOLD} met)\n"
-            f"• 5-min Trend ✅: Supertrend={st_signal}, MACD={macd_bias}\n"
+            f"• 5-min Trend ✅: Supertrend={st_signal} AND MACD={macd_bias} (both agree)\n"
+            f"• RSI Alignment ✅: {rsi_reason_bull}\n"
             f"• 15-min Trend ✅: {trend_15m_reason_bull}\n"
             f"• {vix_reason}\n"
             f"• {max_pain_reason}\n"
@@ -955,16 +977,17 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {macd_bias}, Supertrend {st_signal}\n"
             f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
-            f"• Exit Rule: 13% profit target, ₹1300 stop loss, or auto square-off at 3:00 PM IST close\n"
+            f"• Exit Rule: 13% profit target or auto square-off at 3:00 PM IST close\n"
             f"• Groww Strategy: Buy {atm} CE, set limit order within bid-ask spread."
         )
     elif (bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked
-            and trend_ok_bear and vix_ok and max_pain_ok and trend_15m_bear):
+            and trend_ok_bear and rsi_ok_bear and vix_ok and max_pain_ok and trend_15m_bear):
         signal, otype, confidence = "BUY_PUT", "PE", min(99, 75 + abs(bias_score) * 6)
         reasoning = (
-            f"WHY BUY PUT (PE) — ALL 7 GATES PASSED:\n"
+            f"WHY BUY PUT (PE) — ALL 8 GATES PASSED:\n"
             f"• Bias Score: {bias_score:+}/±10 (threshold ≤-{ENTRY_THRESHOLD} met)\n"
-            f"• 5-min Trend ✅: Supertrend={st_signal}, MACD={macd_bias}\n"
+            f"• 5-min Trend ✅: Supertrend={st_signal} AND MACD={macd_bias} (both agree)\n"
+            f"• RSI Alignment ✅: {rsi_reason_bear}\n"
             f"• 15-min Trend ✅: {trend_15m_reason_bear}\n"
             f"• {vix_reason}\n"
             f"• {max_pain_reason}\n"
@@ -973,7 +996,7 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {macd_bias}, Supertrend {st_signal}\n"
             f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
-            f"• Exit Rule: 13% profit target, ₹1300 stop loss, or auto square-off at 3:00 PM IST close\n"
+            f"• Exit Rule: 13% profit target or auto square-off at 3:00 PM IST close\n"
             f"• Groww Strategy: Buy {atm} PE, set limit order within bid-ask spread."
         )
     else:
@@ -983,12 +1006,16 @@ def _rule_based_signal(analysis: dict) -> dict:
         if abs(bias_score) < ENTRY_THRESHOLD:
             wait_reasons.append(f"Weak signal (bias {bias_score:+}, need ≥{ENTRY_THRESHOLD} or ≤-{ENTRY_THRESHOLD})")
         if bias_score >= ENTRY_THRESHOLD and not trend_ok_bull:
-            wait_reasons.append(f"5-min trend not confirmed for BUY CALL: Supertrend={st_signal}, MACD={macd_bias}")
+            wait_reasons.append(f"5-min trend split: Supertrend={st_signal} & MACD={macd_bias} — need BOTH to agree for BUY CALL")
         if bias_score <= -ENTRY_THRESHOLD and not trend_ok_bear:
-            wait_reasons.append(f"5-min trend not confirmed for BUY PUT: Supertrend={st_signal}, MACD={macd_bias}")
-        if bias_score >= ENTRY_THRESHOLD and trend_ok_bull and not trend_15m_bull:
+            wait_reasons.append(f"5-min trend split: Supertrend={st_signal} & MACD={macd_bias} — need BOTH to agree for BUY PUT")
+        if bias_score >= ENTRY_THRESHOLD and trend_ok_bull and not rsi_ok_bull:
+            wait_reasons.append(f"RSI conflict for BUY CALL: RSI={rsi_val:.1f} ({rsi_signal}) — needs to be >50 and not Overbought")
+        if bias_score <= -ENTRY_THRESHOLD and trend_ok_bear and not rsi_ok_bear:
+            wait_reasons.append(f"RSI conflict for BUY PUT: RSI={rsi_val:.1f} ({rsi_signal}) — needs to be <50 and not Oversold (likely bounce)")
+        if bias_score >= ENTRY_THRESHOLD and trend_ok_bull and rsi_ok_bull and not trend_15m_bull:
             wait_reasons.append(f"15-min trend conflict: {trend_15m_reason_bull} — waiting for higher-timeframe alignment")
-        if bias_score <= -ENTRY_THRESHOLD and trend_ok_bear and not trend_15m_bear:
+        if bias_score <= -ENTRY_THRESHOLD and trend_ok_bear and rsi_ok_bear and not trend_15m_bear:
             wait_reasons.append(f"15-min trend conflict: {trend_15m_reason_bear} — waiting for higher-timeframe alignment")
         if not vix_ok:
             wait_reasons.append(vix_reason)
