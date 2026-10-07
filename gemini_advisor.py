@@ -12,6 +12,8 @@ import logging
 import os
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import config
 
@@ -384,7 +386,7 @@ def get_signal(analysis: dict) -> dict:
 
         prompt = _build_prompt(analysis)
         candidate_models = [config.GEMINI_MODEL] + [
-            m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])
+            m for m in getattr(config, "GEMINI_FALLBACK_MODELS", [])
             if m != config.GEMINI_MODEL
         ]
 
@@ -397,7 +399,7 @@ def get_signal(analysis: dict) -> dict:
         last_err = None
         for key_idx, key in enumerate(available_keys):
             masked_key = (key[:6] + "..." + key[-4:]) if len(key) > 10 else f"Key #{key_idx+1}"
-            hit_quota = False
+            key_all_quota_hit = True
             for model_name in candidate_models:
                 try:
                     start = time.time()
@@ -424,16 +426,18 @@ def get_signal(analysis: dict) -> dict:
                 except Exception as e:
                     last_err = str(e)
                     if _is_quota_error(last_err):
-                        logger.warning(f"Gemini key {masked_key} hit quota limit (429): {e}. Placing on cooldown & rotating to next key...")
-                        _mark_key_cooldown(key, seconds=3600)
-                        hit_quota = True
-                        break  # Stop trying other models on this exhausted key; advance to next key immediately!
+                        logger.warning(f"Gemini model {model_name} on key {masked_key} hit quota (429): {e}. Trying next fallback model...")
+                        continue  # Try next candidate model on this key before giving up!
                     else:
+                        key_all_quota_hit = False
                         logger.warning(f"Gemini call with {model_name} using key {masked_key} failed: {e}. Trying next option...")
 
-            # If quota hit and another key is available, proceed immediately to next key
-            if hit_quota and (key_idx + 1 < len(available_keys)):
-                logger.info(f"Switching from exhausted key {masked_key} to next configured API key...")
+            # If all models failed with quota on this key, put key on temporary cooldown
+            if key_all_quota_hit:
+                _mark_key_cooldown(key, seconds=1800)
+
+            if key_idx + 1 < len(available_keys):
+                logger.info(f"Switching from key {masked_key} to next configured API key...")
                 continue
 
         # All keys and models exhausted — set 60s cooldown to protect quota
@@ -469,9 +473,8 @@ def _call_gemini_model(
     """
     errors = []
 
-    # 1. Direct REST API (guaranteed to work across all environments including Render free host)
+    # 1. Direct REST API via Python standard library urllib (zero external dependency, 100% portable)
     try:
-        import requests
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -487,30 +490,37 @@ def _call_gemini_model(
             }
 
         timeout_sec = getattr(config, "GEMINI_TIMEOUT", 30)
-        resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=timeout_sec)
-        if resp.status_code == 200:
-            data = resp.json()
-            candidates = data.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts and "text" in parts[0]:
-                    return parts[0]["text"].strip(), "google.rest"
-
-        # Try to extract clean error message
-        err_msg = ""
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         try:
-            err_data = resp.json()
-            err_msg = err_data.get("error", {}).get("message", resp.text[:200])
-        except Exception:
-            err_msg = resp.text[:200]
-        # If server returned an HTTP error code (e.g. 503 high demand, 404 expired, 429 rate limit),
-        # trying SDKs on the exact same model will hit the same server error. Raise immediately!
-        raise RuntimeError(f"HTTP {resp.status_code}: {err_msg}")
-    except requests.exceptions.RequestException as e:
-        errors.append(f"REST connection: {e}")
+            with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                resp_bytes = resp.read()
+                data = json.loads(resp_bytes.decode("utf-8"))
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and "text" in parts[0]:
+                        return parts[0]["text"].strip(), "google.rest"
+        except urllib.error.HTTPError as he:
+            err_body = he.read().decode("utf-8", errors="replace")
+            err_msg = ""
+            try:
+                err_data = json.loads(err_body)
+                err_msg = err_data.get("error", {}).get("message", err_body[:250])
+            except Exception:
+                err_msg = err_body[:250]
+            # Server HTTP errors (429 rate limit, 404, 503) should raise immediately to trigger fallback
+            raise RuntimeError(f"HTTP {he.code}: {err_msg}")
+        except urllib.error.URLError as ue:
+            errors.append(f"URLError: {ue}")
+    except RuntimeError:
+        raise
     except Exception as e:
-        # Re-raise server HTTP errors directly so candidate loop can advance to next fallback model
-        raise e
+        errors.append(f"REST: {e}")
 
     # 2. google.genai SDK (used if REST connection/import had issue)
     try:
@@ -589,14 +599,14 @@ def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> 
     )
 
     candidate_models = [config.GEMINI_MODEL] + [
-        m for m in getattr(config, "GEMINI_FALLBACK_MODELS", ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])
+        m for m in getattr(config, "GEMINI_FALLBACK_MODELS", [])
         if m != config.GEMINI_MODEL
     ]
 
     last_err = None
     for key_idx, key in enumerate(available_keys):
         masked_key = (key[:6] + "..." + key[-4:]) if len(key) > 10 else f"Key #{key_idx+1}"
-        hit_quota = False
+        key_all_quota_hit = True
         for model_name in candidate_models:
             try:
                 start = time.time()
@@ -629,15 +639,17 @@ def test_gemini_call(custom_prompt: str | None = None, symbol: str = "TEST") -> 
             except Exception as e:
                 last_err = str(e)
                 if _is_quota_error(last_err):
-                    logger.warning(f"Test call: Key {masked_key} hit quota limit (429): {e}. Placing on cooldown & trying next key...")
-                    _mark_key_cooldown(key, seconds=3600)
-                    hit_quota = True
-                    break
+                    logger.warning(f"Test call: {model_name} on key {masked_key} hit quota (429): {e}. Trying next fallback model...")
+                    continue
                 else:
+                    key_all_quota_hit = False
                     logger.warning(f"Test call with {model_name} using key {masked_key} failed: {e}. Trying next option...")
 
-        if hit_quota and (key_idx + 1 < len(available_keys)):
-            logger.info(f"Test call: switching from exhausted key {masked_key} to next configured API key...")
+        if key_all_quota_hit:
+            _mark_key_cooldown(key, seconds=1800)
+
+        if key_idx + 1 < len(available_keys):
+            logger.info(f"Test call: switching from key {masked_key} to next configured API key...")
             continue
 
     entry = {

@@ -11,12 +11,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Locally: falls back to signals.sqlite next to this file.
 DB_FILE = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "signals.sqlite"))
 
-# Load environment variables from .env file (if python-dotenv installed)
+# Load environment variables from .env file
 try:
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
 except ImportError:
-    pass
+    _env_path = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(_env_path):
+        try:
+            with open(_env_path, "r", encoding="utf-8") as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith("#") and "=" in _line:
+                        _k, _v = _line.split("=", 1)
+                        _k, _v = _k.strip(), _v.strip().strip("\"'")
+                        if _k and _k not in os.environ:
+                            os.environ[_k] = _v
+        except Exception:
+            pass
 
 # ─── NSE Indices ──────────────────────────────────────────
 INDICES = {
@@ -102,24 +114,32 @@ GEMINI_API_KEY_3 = os.environ.get("GEMINI_API_KEY_3", None)
 def _normalize_gemini_model(model_name: str | None) -> str:
     """Normalize model string to ensure valid, active Gemini model ID."""
     if not model_name:
-        return "gemini-3.8-flash"
+        return "gemini-flash-latest"
     m = model_name.strip()
     m_clean = m.lower().replace(" ", "-").replace("_", "-")
-    # Upgrade user variations e.g. "gemini 3.8flash", "3.8-flash", "gemini-3.8flash"
+    if any(k in m_clean for k in ("flash-lite-latest", "flash-lite")):
+        return "gemini-flash-lite-latest"
+    if any(k in m_clean for k in ("3.5-flash-lite", "3.5flash-lite")):
+        return "gemini-3.5-flash-lite"
+    if any(k in m_clean for k in ("3.5flash", "3.5-flash", "3.5")):
+        return "gemini-3.5-flash"
     if any(k in m_clean for k in ("3.8flash", "3.8-flash", "3.8")):
         return "gemini-3.8-flash"
     if any(k in m_clean for k in ("3.6flash", "3.6-flash", "3.6")):
         return "gemini-3.6-flash"
-    if any(k in m_clean for k in ("3.5flash", "3.5-flash", "3.5")):
-        return "gemini-3.5-flash"
-    # Auto-upgrade expired/sunset models (e.g. 1.5-flash, 2.0-flash-exp, 2.0-flash)
-    if any(k in m_clean for k in ("1.5-flash", "2.0-flash", "2.0-flash-exp")):
-        return "gemini-3.8-flash"
+    if any(k in m_clean for k in ("1.5-flash", "2.0-flash", "flash-latest", "flash")):
+        return "gemini-flash-latest"
     return m
 
-_raw_model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+_raw_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 GEMINI_MODEL = _normalize_gemini_model(_raw_model)
-GEMINI_FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+GEMINI_FALLBACK_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.8-flash",
+]
 GEMINI_TIMEOUT = 30   # seconds
 
 # ─── Execution Costs / Slippage (for backtesting realism) ────
