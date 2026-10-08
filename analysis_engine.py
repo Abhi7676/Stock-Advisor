@@ -278,7 +278,7 @@ def _rsi(closes: pd.Series, period: int = 14) -> float:
 
 def _supertrend(highs: pd.Series, lows: pd.Series, closes: pd.Series,
                 period: int = 10, multiplier: float = 3.0) -> tuple:
-    """Simplified Supertrend calculation. Returns (signal, trend_direction)."""
+    """Standard Supertrend calculation with directional trend tracking. Returns (signal, trend_direction)."""
     try:
         # ATR
         tr = pd.concat([
@@ -294,26 +294,34 @@ def _supertrend(highs: pd.Series, lows: pd.Series, closes: pd.Series,
 
         final_upper = upper_band.copy()
         final_lower = lower_band.copy()
+        trend = pd.Series(1, index=closes.index)
 
         for i in range(1, len(closes)):
+            prev_close = closes.iloc[i - 1]
             final_upper.iloc[i] = (
                 min(upper_band.iloc[i], final_upper.iloc[i - 1])
-                if closes.iloc[i - 1] <= final_upper.iloc[i - 1]
+                if prev_close <= final_upper.iloc[i - 1]
                 else upper_band.iloc[i]
             )
             final_lower.iloc[i] = (
                 max(lower_band.iloc[i], final_lower.iloc[i - 1])
-                if closes.iloc[i - 1] >= final_lower.iloc[i - 1]
+                if prev_close >= final_lower.iloc[i - 1]
                 else lower_band.iloc[i]
             )
 
-        last = closes.iloc[-1]
-        if last > final_upper.iloc[-1]:
+            prev_trend = trend.iloc[i - 1]
+            curr_close = closes.iloc[i]
+            if prev_trend == 1:
+                trend.iloc[i] = -1 if curr_close < final_lower.iloc[i] else 1
+            else:
+                trend.iloc[i] = 1 if curr_close > final_upper.iloc[i] else -1
+
+        last_trend = trend.iloc[-1]
+        if last_trend == 1:
             return "BUY", "UPTREND"
-        elif last < final_lower.iloc[-1]:
+        elif last_trend == -1:
             return "SELL", "DOWNTREND"
-        else:
-            return "NEUTRAL", "SIDEWAYS"
+        return "NEUTRAL", "SIDEWAYS"
     except Exception:
         return "NEUTRAL", "SIDEWAYS"
 
