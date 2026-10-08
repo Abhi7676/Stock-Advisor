@@ -84,42 +84,54 @@ def _is_market_open() -> bool:
 
 
 def _market_closed_signal(analysis: dict) -> dict:
-    """Returns a WAIT signal when market is closed — never recommend trades outside market hours."""
+    """Returns a WAIT signal when market or trading window is closed."""
     symbol = analysis["symbol"]
     ltp = analysis.get("ltp", 0)
     atm = analysis.get("atm_strike", 0)
     lot_size = config.INDICES[symbol]["lot_size"]
     premium = analysis.get("atm_call_ltp", 0)
 
+    now = _get_ist_now()
+    mins = now.hour * 60 + now.minute
+    is_post_1pm = mins >= (13 * 60)
+
+    msg = "Go do your work, please do not trade now" if is_post_1pm else "Market is closed. Wait for next session."
+    reasoning = (
+        "🛑 TRADING CLOSED (After 1:00 PM IST):\n"
+        "• Go do your work, please do not trade now.\n"
+        "• Trading window is 9:30 AM to 1:00 PM IST only.\n"
+        "• Preserving capital and eliminating late-day decay.\n"
+        "• Signals will resume tomorrow morning at 9:30 AM IST."
+    ) if is_post_1pm else (
+        "MARKET CLOSED — NO TRADING:\n"
+        "• NSE trading session opens at 9:15 AM IST (Mon–Fri)\n"
+        "• Signals will activate during next trading session"
+    )
+
     return {
         "signal": "WAIT", "confidence": 0,
         "strike": atm, "option_type": "NONE",
         "entry_premium": premium,
-        "target_premium": round(premium * (1 + config.PROFIT_TARGET_PCT), 2) if premium else 0,
-        "stop_loss_premium": round(premium * (1 - config.STOP_LOSS_PCT), 2) if premium else 0,
+        "target_premium": 0,
+        "stop_loss_premium": 0,
         "lots_recommended": 0, "estimated_cost_inr": 0,
         "max_profit_inr": 0, "max_loss_inr": 0,
         "lot_size": lot_size,
-        "reasoning": (
-            "MARKET CLOSED — NO TRADING:\n"
-            "• NSE trading session ends at 3:00 PM IST (Mon–Fri)\n"
-            "• All open trades are squared off at 3:00 PM IST\n"
-            "• Signals will activate during next trading session"
-        ),
-        "key_risk": "Market is closed. Wait for next session.",
+        "reasoning": reasoning,
+        "key_risk": msg,
         "market_bias": "NEUTRAL",
-        "trade_tip": "Review today's signals and prepare your watchlist for tomorrow.",
-        "holding_time": "0 Mins — Market Closed",
-        "action_summary": "MARKET CLOSED — All positions squared off at 3:00 PM",
-        "exit_rule": "Positions close at 13% profit target or 3:00 PM IST market close",
+        "trade_tip": msg,
+        "holding_time": "Session Closed",
+        "action_summary": msg,
+        "exit_rule": "No trading after 1:00 PM IST",
         "symbol": symbol, "nearest_expiry": analysis.get("nearest_expiry", "N/A"),
         "atm_strike": atm, "ltp": ltp,
         "bias_score": analysis.get("bias_score", 0),
         "data_source": analysis.get("data_source", "unknown"),
-        "source": "market_closed",
-        "llm_model": "Market Closed",
+        "source": "post_1pm_break" if is_post_1pm else "market_closed",
+        "llm_model": "Session Closed",
         "llm_inference_time": 0,
-        "trading_window": "Market Closed (Trading: 9:15–15:00 IST)",
+        "trading_window": "Trading Window: 9:30 AM – 1:00 PM IST",
         "consecutive_losses": 0,
     }
 
@@ -277,6 +289,12 @@ ATM PREMIUMS ({expiry}):
 • {atm} CE: ₹{call_premium} | Lots with ₹5000: {call_budget.get('lots',0)} | Cost: ₹{call_budget.get('cost_inr',0)}
 • {atm} PE: ₹{put_premium} | Lots with ₹5000: {put_budget.get('lots',0)} | Cost: ₹{put_budget.get('cost_inr',0)}
 
+CRITICAL REQUIREMENT — MINIMUM 13% PROFIT POTENTIAL:
+• ONLY recommend BUY_CALL or BUY_PUT if the setup has clear high-conviction potential to generate a MINIMUM OF +13% PROFIT on the option premium before reaching resistance/support walls.
+• Target premium MUST be at least +13% above entry premium (target_premium >= entry_premium * 1.13).
+• If the room to resistance/support walls or market momentum cannot deliver at least 13% profit, you MUST return "WAIT".
+• Active trading window is 9:30 AM to 1:00 PM IST only. No signals after 1:00 PM IST.
+
 Respond ONLY with this JSON (no markdown, no extra text):
 {{
   "signal": "BUY_CALL" or "BUY_PUT" or "WAIT",
@@ -284,13 +302,13 @@ Respond ONLY with this JSON (no markdown, no extra text):
   "strike": <recommended strike as integer>,
   "option_type": "CE" or "PE" or "NONE",
   "entry_premium": <entry premium in rupees>,
-  "target_premium": <target premium for 13% profit>,
+  "target_premium": <target premium for at least 13% profit>,
   "stop_loss_premium": <stop loss premium level>,
   "estimated_cost_inr": <total cost for 1 lot>,
-  "reasoning": "WHY BUY CALL (or PUT / WAIT):\n• PCR: <exact PCR & interpretation>\n• OI Walls: <Support and Resistance walls>\n• Technicals: <RSI, MACD, Supertrend signals>\n• Risk/Reward: <Target +13%, SL -8%, Capital Protection>",
+  "reasoning": "WHY BUY CALL (or PUT / WAIT):\n• PCR: <exact PCR & interpretation>\n• OI Walls: <Support and Resistance walls>\n• Technicals: <RSI, MACD, Supertrend signals>\n• Profit Potential: <Minimum +13% potential verified>\n• Risk/Reward: <Target +13%, SL -8%, Capital Protection>",
   "key_risk": "<1 sentence about the main risk>",
   "market_bias": "BULLISH" or "BEARISH" or "NEUTRAL",
-  "trade_tip": "<1 practical tip for Groww F&O — target 13% profit or square off at 3:00 PM IST close>"
+  "trade_tip": "<1 practical tip for Groww F&O — target 13% profit or exit by 1:00 PM IST close>"
 }}"""
 
 
@@ -331,6 +349,11 @@ def get_signal(analysis: dict) -> dict:
     # ── Gate 0: Market Hours Check ────────────────────────
     if not _is_market_open():
         return _market_closed_signal(analysis)
+
+    # ── Gate 0.5: Post 1:00 PM Hard Trading Cutoff ─────────
+    now_ist = _get_ist_now()
+    if now_ist.hour >= 13:
+        return _rule_based_signal(analysis)
 
     # ── Stage 1: Fast Rule-Based Filter ───────────────────
     rule_sig = _rule_based_signal(analysis)
@@ -738,12 +761,16 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     prem = round(real_live_prem, 2) if real_live_prem > 0 else round(signal.get("entry_premium", 0) or 0, 2)
     signal["entry_premium"] = prem
 
-    target_prem = round(prem * (1 + config.PROFIT_TARGET_PCT), 2) if prem else 0
+    # Ensure target premium guarantees at least +13% profit on premium
+    min_target = round(prem * (1 + config.PROFIT_TARGET_PCT), 2) if prem else 0
+    target_prem = max(round(signal.get("target_premium", 0) or 0, 2), min_target)
     sl_max = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, 1600)
     sl_points = sl_max / lot_size
     sl_prem = round(max(0.5, prem - sl_points), 2) if prem else 0
     signal["target_premium"] = target_prem
     signal["stop_loss_premium"] = sl_prem
+    signal["min_profit_target_pct"] = 13.0
+    signal["potential_profit_pct"] = round(((target_prem - prem) / prem) * 100, 1) if prem > 0 else 13.0
 
     lots = budget_side.get("lots", 1)
     signal["lots_recommended"] = lots
@@ -761,20 +788,24 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     signal["holding_minutes"] = None
 
     if sig_name == "BUY_CALL":
-        signal["holding_time"] = f"Until +{tgt_pct}% Target or 3:00 PM Close"
-        signal["action_summary"] = f"BUY {symbol} {strike} CE @ ₹{prem} on Groww"
-        signal["exit_rule"] = (f"Target +{tgt_pct}% profit (₹{target_prem}). "
-                               f"No stop loss exit — auto square-off at 3:00 PM IST close.")
+        signal["holding_time"] = f"Until +{tgt_pct}% Target (₹{target_prem}) or 1:00 PM"
+        signal["action_summary"] = f"BUY {symbol} {strike} CE @ ₹{prem} (Target +13%: ₹{target_prem})"
+        signal["exit_rule"] = (f"Target minimum +{tgt_pct}% profit (₹{target_prem}). "
+                               f"Stop loss capped at ₹{sl_max} (₹{sl_prem}). "
+                               f"Trading window closes at 1:00 PM IST.")
     elif sig_name == "BUY_PUT":
-        signal["holding_time"] = f"Until +{tgt_pct}% Target or 3:00 PM Close"
-        signal["action_summary"] = f"BUY {symbol} {strike} PE @ ₹{prem} on Groww"
-        signal["exit_rule"] = (f"Target +{tgt_pct}% profit (₹{target_prem}). "
-                               f"No stop loss exit — auto square-off at 3:00 PM IST close.")
+        signal["holding_time"] = f"Until +{tgt_pct}% Target (₹{target_prem}) or 1:00 PM"
+        signal["action_summary"] = f"BUY {symbol} {strike} PE @ ₹{prem} (Target +13%: ₹{target_prem})"
+        signal["exit_rule"] = (f"Target minimum +{tgt_pct}% profit (₹{target_prem}). "
+                               f"Stop loss capped at ₹{sl_max} (₹{sl_prem}). "
+                               f"Trading window closes at 1:00 PM IST.")
     else:
+        now_ist = _get_ist_now()
+        is_post_1pm = (now_ist.hour * 60 + now_ist.minute) >= (13 * 60)
         signal["holding_minutes"] = 0
-        signal["holding_time"] = "Stay on Sidelines"
-        signal["action_summary"] = "HOLD CASH — Wait for directional confirmation"
-        signal["exit_rule"] = "Do not enter position while market is consolidating"
+        signal["holding_time"] = "Session Closed" if is_post_1pm else "Stay on Sidelines"
+        signal["action_summary"] = "Go do your work, please do not trade now" if is_post_1pm else "HOLD CASH — Wait for directional confirmation"
+        signal["exit_rule"] = "No trading after 1:00 PM IST" if is_post_1pm else "Do not enter position while market is consolidating"
 
     signal["lot_size"] = lot_size
     signal["symbol"] = symbol
@@ -791,32 +822,25 @@ def _is_good_trading_window() -> tuple:
     """
     Returns (is_allowed, reason_str) based on IST time-of-day.
     Trading schedule:
-      - Morning Session: 9:30 AM – 12:15 PM IST
-      - Midday Cooling Period: 12:15 PM – 1:30 PM IST (NO SIGNALS — low volume / sideways chop)
-      - Afternoon Session: 1:30 PM – 3:00 PM IST
+      - Active Trading Window: 9:30 AM – 1:00 PM IST (Morning momentum session)
+      - After 1:00 PM IST: All signals STOPPED for the day.
+        Message: 'Go do your work, please do not trade now'
     First 15 mins (9:15–9:30) skipped — opening auction noise / wide spreads.
-    Trading stops strictly at 3:00 PM IST (all open trades square off).
     """
     now = _get_ist_now()
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
-    market_open   = 9 * 60 + 30    # 9:30 AM (skip first 15 min opening noise)
-    cooling_start = 12 * 60 + 15   # 12:15 PM IST (start of midday cooling period)
-    cooling_end   = 13 * 60 + 30   # 1:30 PM IST (end of midday cooling period)
-    market_close  = 15 * 60        # 3:00 PM (all trades auto square-off)
+    market_open  = 9 * 60 + 30    # 9:30 AM IST (opening noise filter)
+    trade_cutoff = 13 * 60        # 1:00 PM IST (Trading strictly ends for the day)
 
     if mins < market_open:
         wait = market_open - mins
         return False, f"Market opens at 9:30 AM IST ({wait} min away — opening noise filter)"
-    if cooling_start <= mins < cooling_end:
-        wait = cooling_end - mins
-        return False, f"Midday cooling period (12:15 PM–1:30 PM IST) — low volume / sideways chop ({wait} min remaining)"
-    if mins < market_close:
-        remaining = market_close - mins
-        session = "Morning session" if mins < cooling_start else "Afternoon session"
-        return True, f"Market active ({session}, {remaining} min to 3:00 PM close)"
-    return False, "Market closed (3:00 PM+ IST) — all positions squared off"
+    if mins < trade_cutoff:
+        remaining = trade_cutoff - mins
+        return True, f"Trading window active (9:30 AM – 1:00 PM IST, {remaining} min remaining)"
+    return False, "Trading ended for today (After 1:00 PM IST) — Go do your work, please do not trade now"
 
 
 # ─── Consecutive Loss Tracker (Resets daily each morning) ───
@@ -962,8 +986,53 @@ def _rule_based_signal(analysis: dict) -> dict:
     trend_15m_reason_bull = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
     trend_15m_reason_bear = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
 
+    # ── Gate 8: Minimum 13% Profit Potential & OI Clearance Filter ──
+    # For an option to gain >= 13% on premium (delta ~0.50), the spot index must have
+    # adequate clearance before hitting major Open Interest walls (Call Wall resistance / Put Wall support).
+    # If the distance to the wall is less than the required spot move, upside/downside is capped by institutional writers
+    # and the trade will stall or reverse before achieving the 13% profit target.
+    call_prem = float(analysis.get("atm_call_ltp", 0) or 0)
+    put_prem = float(analysis.get("atm_put_ltp", 0) or 0)
+    call_wall_strike = float(oi.get("call_resistance", 0) or 0)
+    put_wall_strike = float(oi.get("put_support", 0) or 0)
+
+    min_floor_pts = 22.0 if symbol == "NIFTY" else 65.0
+    needed_pts_call = max(min_floor_pts, (call_prem * config.PROFIT_TARGET_PCT) / 0.50) if call_prem > 0 else min_floor_pts
+    needed_pts_put = max(min_floor_pts, (put_prem * config.PROFIT_TARGET_PCT) / 0.50) if put_prem > 0 else min_floor_pts
+
+    # Headroom check for BUY CALL: Spot to Call Wall (Resistance)
+    if call_wall_strike > ltp:
+        headroom_call = call_wall_strike - ltp
+        profit_potential_ok_bull = (headroom_call >= needed_pts_call) and (call_prem >= 30.0)
+        potential_reason_bull = (
+            f"Headroom to Call Wall ({call_wall_strike:.0f}) is {headroom_call:.0f} pts "
+            f"✅ (exceeds {needed_pts_call:.0f} pts needed for +13% profit)"
+            if profit_potential_ok_bull else
+            f"Capped upside: Only {headroom_call:.0f} pts to Call Wall ({call_wall_strike:.0f}) — "
+            f"needs {needed_pts_call:.0f} pts for +13% profit. Risk of reversal before target."
+        )
+    else:
+        profit_potential_ok_bull = call_prem >= 30.0
+        potential_reason_bull = f"Call Wall breakout detected ✅ — open headroom for +13% target"
+
+    # Room check for BUY PUT: Spot to Put Wall (Support)
+    if put_wall_strike > 0 and put_wall_strike < ltp:
+        headroom_put = ltp - put_wall_strike
+        profit_potential_ok_bear = (headroom_put >= needed_pts_put) and (put_prem >= 30.0)
+        potential_reason_bear = (
+            f"Room to Put Wall ({put_wall_strike:.0f}) is {headroom_put:.0f} pts "
+            f"✅ (exceeds {needed_pts_put:.0f} pts needed for +13% profit)"
+            if profit_potential_ok_bear else
+            f"Capped downside: Only {headroom_put:.0f} pts to Put Wall ({put_wall_strike:.0f}) — "
+            f"needs {needed_pts_put:.0f} pts for +13% profit. Risk of bounce before target."
+        )
+    else:
+        profit_potential_ok_bear = put_prem >= 30.0
+        potential_reason_bear = f"Put Wall breakdown detected ✅ — open room for +13% target"
+
     if (bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked
-            and trend_ok_bull and rsi_ok_bull and vix_ok and max_pain_ok and trend_15m_bull):
+            and trend_ok_bull and rsi_ok_bull and vix_ok and max_pain_ok and trend_15m_bull
+            and profit_potential_ok_bull):
         signal, otype, confidence = "BUY_CALL", "CE", min(98, int(70 + bias_score * 5.5))
         reasoning = (
             f"WHY BUY CALL (CE) — ALL 8 GATES PASSED:\n"
@@ -971,18 +1040,20 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• 5-min Trend ✅: Supertrend={st_signal} AND MACD={macd_bias} (both agree)\n"
             f"• RSI Alignment ✅: {rsi_reason_bull}\n"
             f"• 15-min Trend ✅: {trend_15m_reason_bull}\n"
+            f"• Profit Potential ✅: Minimum +13% profit potential verified ({potential_reason_bull})\n"
             f"• {vix_reason}\n"
             f"• {max_pain_reason}\n"
             f"• Trading Window: ✅ {window_reason}\n"
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bullish put writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {macd_bias}, Supertrend {st_signal}\n"
-            f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
-            f"• Exit Rule: 13% profit target or auto square-off at 3:00 PM IST close\n"
+            f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% minimum profit on premium\n"
+            f"• Exit Rule: 13% profit target or auto square-off at 1:00 PM IST close\n"
             f"• Groww Strategy: Buy {atm} CE, set limit order within bid-ask spread."
         )
     elif (bias_score <= -ENTRY_THRESHOLD and window_ok and not loss_blocked
-            and trend_ok_bear and rsi_ok_bear and vix_ok and max_pain_ok and trend_15m_bear):
+            and trend_ok_bear and rsi_ok_bear and vix_ok and max_pain_ok and trend_15m_bear
+            and profit_potential_ok_bear):
         signal, otype, confidence = "BUY_PUT", "PE", min(98, int(70 + abs(bias_score) * 5.5))
         reasoning = (
             f"WHY BUY PUT (PE) — ALL 8 GATES PASSED:\n"
@@ -990,14 +1061,15 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• 5-min Trend ✅: Supertrend={st_signal} AND MACD={macd_bias} (both agree)\n"
             f"• RSI Alignment ✅: {rsi_reason_bear}\n"
             f"• 15-min Trend ✅: {trend_15m_reason_bear}\n"
+            f"• Profit Potential ✅: Minimum +13% profit potential verified ({potential_reason_bear})\n"
             f"• {vix_reason}\n"
             f"• {max_pain_reason}\n"
             f"• Trading Window: ✅ {window_reason}\n"
             f"• Put-Call Ratio (PCR): {pcr} ({analysis.get('pcr_signal','').replace('_',' ')}) — Bearish call writing\n"
             f"• OI Support/Resistance: Call wall at {oi.get('call_resistance','')}, Put support at {oi.get('put_support','')}\n"
             f"• Technical Indicators: RSI(14)={ta.get('rsi',0):.1f} ({ta.get('rsi_signal','').replace('_',' ')}), MACD {macd_bias}, Supertrend {st_signal}\n"
-            f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% profit on premium\n"
-            f"• Exit Rule: 13% profit target or auto square-off at 3:00 PM IST close\n"
+            f"• Target: +{config.PROFIT_TARGET_PCT*100:.0f}% minimum profit on premium\n"
+            f"• Exit Rule: 13% profit target or auto square-off at 1:00 PM IST close\n"
             f"• Groww Strategy: Buy {atm} PE, set limit order within bid-ask spread."
         )
     else:
@@ -1018,6 +1090,10 @@ def _rule_based_signal(analysis: dict) -> dict:
             wait_reasons.append(f"15-min trend conflict: {trend_15m_reason_bull} — waiting for higher-timeframe alignment")
         if bias_score <= -ENTRY_THRESHOLD and trend_ok_bear and rsi_ok_bear and not trend_15m_bear:
             wait_reasons.append(f"15-min trend conflict: {trend_15m_reason_bear} — waiting for higher-timeframe alignment")
+        if bias_score >= ENTRY_THRESHOLD and not profit_potential_ok_bull:
+            wait_reasons.append(potential_reason_bull)
+        if bias_score <= -ENTRY_THRESHOLD and not profit_potential_ok_bear:
+            wait_reasons.append(potential_reason_bear)
         if not vix_ok:
             wait_reasons.append(vix_reason)
         if not max_pain_ok:
@@ -1037,22 +1113,20 @@ def _rule_based_signal(analysis: dict) -> dict:
             f"• Capital Protection: Preserve ₹{config.USER_BUDGET_INR:,} budget — patience is profitable."
         )
 
-    # Detect midday cooling period WAIT to show a friendly message in the UI.
-    # This applies to ALL symbols regardless of bias score or loss count —
-    # if the trading window is blocked due to cooling period, show the calm banner.
-    is_midday_break = (
-        signal == "WAIT"
-        and not window_ok
-        and ("cooling period" in window_reason.lower() or "midday" in window_reason.lower())
-    )
+    now_ist = _get_ist_now()
+    mins_ist = now_ist.hour * 60 + now_ist.minute
+    is_post_1pm = mins_ist >= (13 * 60)
 
-    if is_midday_break:
+    if is_post_1pm:
+        signal = "WAIT"
+        otype = "NONE"
+        confidence = 0
         reasoning = (
-            "☕ MIDDAY COOLING PERIOD (12:15 PM – 1:30 PM IST) — CAPITAL PROTECTION:\n"
-            "• No trade signals are generated during this cooling window.\n"
-            "• Low volumes, rapid option theta decay, and sideways chop typically occur at midday.\n"
-            "• Signals will resume for the afternoon session starting at 1:30 PM IST.\n"
-            f"• Current Status: {window_reason}"
+            "🛑 TRADING CLOSED FOR TODAY (After 1:00 PM IST):\n"
+            "• Go do your work, please do not trade now.\n"
+            "• Intraday trading window is 9:30 AM to 1:00 PM IST only.\n"
+            "• Preserving capital and eliminating afternoon theta decay.\n"
+            "• Signals will resume tomorrow morning at 9:30 AM IST."
         )
 
     side = "call" if otype in ("CE", "NONE") else "put"
@@ -1080,23 +1154,27 @@ def _rule_based_signal(analysis: dict) -> dict:
         "max_loss_inr": round(sl_max * bd.get("lots", 1), 2),
         "lot_size": lot_size,
         "reasoning": reasoning,
-        "key_risk": "Market can reverse quickly — always use a stop loss. Never risk more than 50% of capital.",
+        "key_risk": "Go do your work, please do not trade now" if is_post_1pm else "Market can reverse quickly — always use a stop loss. Never risk more than 50% of capital.",
         "market_bias": (
-            "BULLISH" if bias_score >= ENTRY_THRESHOLD else
-            "BEARISH" if bias_score <= -ENTRY_THRESHOLD else "NEUTRAL"
+            "NEUTRAL" if is_post_1pm else
+            ("BULLISH" if bias_score >= ENTRY_THRESHOLD else
+             "BEARISH" if bias_score <= -ENTRY_THRESHOLD else "NEUTRAL")
         ),
         "trade_tip": (
-            "Set a LIMIT order within the bid-ask spread on Groww F&O. "
-            "Move SL to breakeven once trade is +10% in profit (trailing stop)."
+            "Go do your work, please do not trade now." if is_post_1pm else
+            "Set a LIMIT order within the bid-ask spread on Groww F&O. Move SL to breakeven once trade is +10% in profit."
         ),
+        "holding_time": "Session Closed" if is_post_1pm else "Stay on Sidelines",
+        "action_summary": "Go do your work, please do not trade now" if is_post_1pm else "HOLD CASH — Wait for directional confirmation",
+        "exit_rule": "No trading after 1:00 PM IST" if is_post_1pm else "Do not enter position while market is consolidating",
         "symbol": symbol, "nearest_expiry": expiry,
         "atm_strike": atm, "ltp": ltp,
         "bias_score": bias_score,
         "data_source": analysis.get("data_source", "unknown"),
-        "source": "midday_break" if is_midday_break else "rule_based",
-        "llm_model": "Rule-Based (Enhanced v2)",
+        "source": "post_1pm_break" if is_post_1pm else "rule_based",
+        "llm_model": "Session Closed" if is_post_1pm else "Rule-Based (Enhanced v2)",
         "llm_inference_time": 0,
-        "trading_window": window_reason,
+        "trading_window": "Trading window ended at 1:00 PM IST" if is_post_1pm else window_reason,
         "consecutive_losses": consec_losses,
     }
     return _enrich_signal(res, analysis)

@@ -306,19 +306,19 @@ function renderSignal(sym, json) {
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}StrikeVal`, s.strike ? `${s.strike} ${s.option_type || ""}` : "—", valCls);
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Expiry`, s.nearest_expiry || "—");
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Entry`,  s.entry_premium ? `₹${s.entry_premium}` : "—", valCls);
-  setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Target`, s.target_premium ? `₹${s.target_premium}` : "—", "call-val");
+  setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Target`, s.target_premium ? `₹${s.target_premium} (+${s.potential_profit_pct || 13}%)` : "—", "call-val");
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}SL`,     s.stop_loss_premium ? `₹${s.stop_loss_premium}` : "—", "put-val");
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Lots`,   s.lots_recommended ? `${s.lots_recommended} lot(s)` : "—");
 
-  // Reasoning — friendly midday break message if applicable
+  // Reasoning — friendly post-1pm cutoff message if applicable
   const reasoningEl = document.getElementById(`${sym === "NIFTY" ? "nifty" : "bn"}Reasoning`);
-  if (s.source === "midday_break") {
+  if (s.source === "post_1pm_break" || (s.action_summary && s.action_summary.includes("do not trade now")) || s.source === "midday_break") {
     reasoningEl.textContent =
-      "☕ MIDDAY COOLING PERIOD (12:15 PM – 1:30 PM IST)\n" +
-      "• For your safety, no trade signals are generated during this cooling period.\n" +
-      "• Reason: Market volumes are thin during midday, option premiums decay rapidly (theta decay), and false breakouts are common.\n" +
-      "• What to do: Review morning trades, relax, and get ready for the afternoon session which opens at 1:30 PM IST.\n" +
-      "• Afternoon Window: 1:30 PM – 3:00 PM — strong directional momentum often resumes after 1:30 PM. Stay alert!";
+      "🛑 TRADING CLOSED FOR TODAY (After 1:00 PM IST)\n" +
+      "• Go do your work, please do not trade now.\n" +
+      "• Intraday trading window is 9:30 AM to 1:00 PM IST only.\n" +
+      "• Preserving capital and eliminating late-afternoon theta decay.\n" +
+      "• Signals will resume tomorrow morning at 9:30 AM IST.";
   } else {
     reasoningEl.textContent = s.reasoning || "—";
   }
@@ -352,27 +352,27 @@ function signalBoxClass(sig) {
 }
 
 function signalMeta(s, sym) {
-  if (s.source === "market_closed") {
-    return {
-      cls: "wait", emoji: "🌙", label: "MARKET CLOSED",
-      subLabel: "NSE opens at 9:15 AM IST (Mon–Fri)"
-    };
-  }
-  if (s.source === "midday_break") {
+  if (s.source === "post_1pm_break" || (s.action_summary && s.action_summary.includes("do not trade now")) || (s.trading_window && s.trading_window.includes("1:00 PM"))) {
     return {
       cls: "wait",
-      emoji: "☕",
-      label: "COOLING PERIOD",
-      subLabel: "No signals 12:15 PM – 1:30 PM — low volume / sideways chop protection"
+      emoji: "🛑",
+      label: "TRADING CLOSED (AFTER 1 PM)",
+      subLabel: "Go do your work, please do not trade now"
+    };
+  }
+  if (s.source === "market_closed") {
+    return {
+      cls: "wait", emoji: "🛑", label: "TRADING CLOSED (AFTER 1 PM)",
+      subLabel: "Go do your work, please do not trade now"
     };
   }
   if (s.signal === "BUY_CALL") return {
     cls: "call", emoji: "\ud83d\udcc8", label: "BUY CALL \u2705",
-    subLabel: `${s.strike} CE | Lot: ${s.lots_recommended || "?"} | Cost: \u20b9${s.estimated_cost_inr || "?"}`
+    subLabel: `${s.strike} CE | Target +13% (₹${s.target_premium || "?"}) | Cost: \u20b9${s.estimated_cost_inr || "?"}`
   };
   if (s.signal === "BUY_PUT") return {
     cls: "put", emoji: "\ud83d\udcc9", label: "BUY PUT \ud83d\udd34",
-    subLabel: `${s.strike} PE | Lot: ${s.lots_recommended || "?"} | Cost: \u20b9${s.estimated_cost_inr || "?"}`
+    subLabel: `${s.strike} PE | Target +13% (₹${s.target_premium || "?"}) | Cost: \u20b9${s.estimated_cost_inr || "?"}`
   };
   return {
     cls: "wait", emoji: "\u23f8\ufe0f", label: "WAIT / AVOID",

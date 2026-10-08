@@ -65,13 +65,13 @@ def _build_telegram_message(signal: dict) -> str:
         f"Strike: `{strike_str} {otype}` \\| Expiry: `{expiry_str}`\n"
         f"\n"
         f"💰 Entry Premium: `₹{prem_str}`\n"
-        f"🎯 Target: `₹{tgt_str}` \\(\\+13%\\)\n"
+        f"🎯 Target: `₹{tgt_str}` \\(\\+13% Min Profit\\)\n"
         f"🛑 Stop Loss: `₹{sl_str}` \\(₹{sl_max} max loss\\)\n"
         f"\n"
         f"📊 Spot: `₹{ltp_str}` \\| Bias: `{bias_str}/±10` \\| Conf: `{conf_str}%`\n"
         f"⏱ {esc(now)}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_Enter on Groww F\\&O\\. Exit at \\+13% or 3:00 PM IST auto square\\-off\\._"
+        f"_Enter on Groww F\\&O\\. Exit at \\+13% min profit or 1:00 PM IST cutoff\\._"
     )
 
 
