@@ -56,6 +56,8 @@ def _build_telegram_message(signal: dict) -> str:
     strike_str = esc(str(strike))
     expiry_str = esc(str(expiry))
 
+    sl_max   = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(sym, 1600)
+
     return (
         f"{emoji} *F\\&O SIGNAL ALERT — {esc(sym)}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -64,7 +66,7 @@ def _build_telegram_message(signal: dict) -> str:
         f"\n"
         f"💰 Entry Premium: `₹{prem_str}`\n"
         f"🎯 Target: `₹{tgt_str}` \\(\\+13%\\)\n"
-        f"🛑 Stop Loss: `₹{sl_str}` \\(₹1300 max loss\\)\n"
+        f"🛑 Stop Loss: `₹{sl_str}` \\(₹{sl_max} max loss\\)\n"
         f"\n"
         f"📊 Spot: `₹{ltp_str}` \\| Bias: `{bias_str}/±10` \\| Conf: `{conf_str}%`\n"
         f"⏱ {esc(now)}\n"

@@ -219,15 +219,16 @@ def _init_db():
     conn.close()
 
 
-# ₹1300 hard stop-loss: square off if live loss on a trade exceeds this
-STOP_LOSS_AMOUNT_INR = 1300
+def _get_stop_loss_amount(symbol: str) -> float:
+    """Returns max loss cap in INR: ₹1600 for NIFTY, ₹2300 for BANKNIFTY."""
+    return float(getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, getattr(config, "STOP_LOSS_AMOUNT_INR", 1600)))
 
 
 def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
     """Tracks active trade signals (BUY_CALL / BUY_PUT), updates live PnL.
     Closes trades on:
       1. 13% profit target hit → ✅ PROFIT TARGET HIT +13.0%
-      2. ₹1300 stop loss hit  → 🛑 STOP LOSS EXIT (loss ≥ ₹1300)
+      2. Stop loss hit → 🛑 STOP LOSS EXIT (₹1600 for Nifty, ₹2300 for BankNifty)
       3. Auto square-off at 3:00 PM IST market close"""
     sig_name = signal.get("signal")
     try:
@@ -279,6 +280,7 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
 
             is_win = False
             exit_p = curr_p
+            sl_amount = _get_stop_loss_amount(symbol)
 
             if pnl_pct >= 13.0 or (target_p > 0 and curr_p >= target_p):
                 # ── 13% Profit Target Hit — Book Profit Immediately ──
@@ -288,17 +290,17 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 new_status = "✅ PROFIT TARGET HIT +13.0% 🎯"
                 closed_at = now_iso
                 is_win = True
-            elif pnl_amt <= -STOP_LOSS_AMOUNT_INR:
-                # ── ₹1300 Hard Stop Loss — Exit to Protect Capital ──
-                # Order executed at stop-loss price; loss is strictly capped at ₹1300
-                sl_exit_p = round(max(0.5, entry_p - (STOP_LOSS_AMOUNT_INR / lot_size)), 2)
+            elif pnl_amt <= -sl_amount:
+                # ── Hard Stop Loss — Exit to Protect Capital ──
+                # Order executed at stop-loss price; loss is strictly capped at sl_amount (₹1600 Nifty, ₹2300 BankNifty)
+                sl_exit_p = round(max(0.5, entry_p - (sl_amount / lot_size)), 2)
                 exit_p = sl_exit_p
-                pnl_amt = -float(STOP_LOSS_AMOUNT_INR)
+                pnl_amt = -float(sl_amount)
                 pnl_pct = round(((exit_p - entry_p) / entry_p) * 100.0, 1)
-                new_status = f"🛑 STOP LOSS EXIT (₹{STOP_LOSS_AMOUNT_INR} loss, {pnl_pct}%)"
+                new_status = f"🛑 STOP LOSS EXIT (₹{int(sl_amount)} loss, {pnl_pct}%)"
                 closed_at = now_iso
                 is_win = False
-                logger.info(f"Stop loss triggered for {symbol} row {row_id}: ₹{STOP_LOSS_AMOUNT_INR} loss ({pnl_pct}%)")
+                logger.info(f"Stop loss triggered for {symbol} row {row_id}: ₹{int(sl_amount)} loss ({pnl_pct}%)")
             elif market_closed:
                 # ── Market Close (3:00 PM IST) — Auto Square-off ──
                 exit_p = curr_p

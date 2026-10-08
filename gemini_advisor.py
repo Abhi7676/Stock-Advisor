@@ -739,7 +739,9 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     signal["entry_premium"] = prem
 
     target_prem = round(prem * (1 + config.PROFIT_TARGET_PCT), 2) if prem else 0
-    sl_prem = round(prem * (1 - config.STOP_LOSS_PCT), 2) if prem else 0
+    sl_max = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, 1600)
+    sl_points = sl_max / lot_size
+    sl_prem = round(max(0.5, prem - sl_points), 2) if prem else 0
     signal["target_premium"] = target_prem
     signal["stop_loss_premium"] = sl_prem
 
@@ -747,7 +749,7 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     signal["lots_recommended"] = lots
     signal["estimated_cost_inr"] = round(prem * lot_size * lots, 2)
     signal["max_profit_inr"] = round((target_prem - prem) * lot_size * lots, 2)
-    signal["max_loss_inr"] = round((prem - sl_prem) * lot_size * lots, 2)
+    signal["max_loss_inr"] = round(sl_max * lots, 2)
 
     # Add Recommended Holding Time & Action Plan
     conf = signal.get("confidence", 50)
@@ -1060,9 +1062,11 @@ def _rule_based_signal(analysis: dict) -> dict:
         else analysis.get("atm_call_ltp", 0)
     )
 
-    # Use config-driven target/SL percentages (not hardcoded)
+    # Use config-driven target/SL amounts
     target_prem = round(premium * (1 + config.PROFIT_TARGET_PCT), 2) if premium else 0
-    sl_prem = round(premium * (1 - config.STOP_LOSS_PCT), 2) if premium else 0
+    sl_max = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, 1600)
+    sl_points = sl_max / lot_size
+    sl_prem = round(max(0.5, premium - sl_points), 2) if premium else 0
 
     res = {
         "signal": signal, "confidence": int(confidence),
@@ -1073,7 +1077,7 @@ def _rule_based_signal(analysis: dict) -> dict:
         "lots_recommended": bd.get("lots", 1),
         "estimated_cost_inr": bd.get("cost_inr", 0),
         "max_profit_inr": bd.get("max_profit_inr", 0),
-        "max_loss_inr": bd.get("max_loss_inr", 0),
+        "max_loss_inr": round(sl_max * bd.get("lots", 1), 2),
         "lot_size": lot_size,
         "reasoning": reasoning,
         "key_risk": "Market can reverse quickly — always use a stop loss. Never risk more than 50% of capital.",
