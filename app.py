@@ -119,12 +119,18 @@ def _is_fresh(symbol: str, ttl: int = config.NSE_REFRESH_INTERVAL) -> bool:
     return (time.time() - _cache[symbol]["last_refresh"]) < ttl
 
 
-def _refresh(symbol: str, force: bool = False):
-    """Runs analysis + LLM signal generation and stores in cache. Thread-safe & non-blocking."""
+def _refresh(symbol: str, force: bool = False, timeout: float = 0.0):
+    """Runs analysis + LLM signal generation and stores in cache. Thread-safe."""
     if not force and _is_fresh(symbol):
         return
     lock = _refresh_lock.get(symbol)
-    if not lock or not lock.acquire(blocking=False):
+    if not lock:
+        return
+    if timeout > 0:
+        acquired = lock.acquire(blocking=True, timeout=timeout)
+    else:
+        acquired = lock.acquire(blocking=False)
+    if not acquired:
         # Refresh already underway for this symbol — avoid duplicate concurrent requests
         return
     try:
@@ -379,8 +385,11 @@ def api_signal(symbol: str):
         return jsonify({"error": f"Unknown symbol: {symbol}"}), 404
 
     force = request.args.get("refresh", "false").lower() == "true"
-    if force or not _is_fresh(symbol):
-        threading.Thread(target=_refresh, args=(symbol, force), daemon=True).start()
+    if force:
+        # User requested manual refresh — wait up to 6 seconds so fresh tick & analysis return immediately
+        _refresh(symbol, force=True, timeout=6.0)
+    elif not _is_fresh(symbol):
+        threading.Thread(target=_refresh, args=(symbol, False), daemon=True).start()
 
     with _cache_lock:
         signal = _cache[symbol]["signal"]

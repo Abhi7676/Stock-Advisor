@@ -62,6 +62,8 @@ NSE_HEADERS = {
     "Accept-Encoding": "gzip, deflate",
     "Referer": "https://www.nseindia.com/option-chain",
     "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 
 # ─── Technical Indicator Settings ─────────────────────────
@@ -149,18 +151,14 @@ TRADING_FEE_PCT = float(os.environ.get("TRADING_FEE_PCT", 0.005))
 SLIPPAGE_PCT = float(os.environ.get("SLIPPAGE_PCT", 0.01))
 
 # ─── NSE API & Refresh Settings ──────────────────────────────
-NSE_REFRESH_INTERVAL = 15   # Refresh live market data every 15 seconds!
+# Refresh live market data every 20 seconds (fast tracking without NSE rate limits)
+NSE_REFRESH_INTERVAL = 20
+FRONTEND_POLL_INTERVAL = 15
 
 # ─── Flask Server ──────────────────────────────────────────────────
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", 5000))
 DEBUG = False
-
-# ─── Data Refresh ─────────────────────────────────────────
-# How often the backend re-fetches NSE data (seconds)
-NSE_REFRESH_INTERVAL = 60
-# How often the frontend polls for new signals (seconds)
-FRONTEND_POLL_INTERVAL = 60
 
 # ─── Number of strikes to display around ATM ──────────────
 STRIKES_AROUND_ATM = 8
