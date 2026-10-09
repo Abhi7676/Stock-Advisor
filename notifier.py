@@ -75,7 +75,7 @@ def _build_telegram_message(signal: dict) -> str:
         f"📊 Spot: `₹{ltp_str}` \\| Bias: `{bias_str}/±10` \\| Conf: `{conf_str}%`\n"
         f"⏱ {esc(now)}\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"_Enter on Groww F\\&O\\. Exit at \\+13% min profit or 1:00 PM IST cutoff\\._"
+        f"_Enter on Groww F\\&O\\. Exit at \\+13% min profit or 1:30 PM IST cutoff\\._"
     )
 
 

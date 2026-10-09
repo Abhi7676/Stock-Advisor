@@ -310,20 +310,20 @@ function renderSignal(sym, json) {
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}SL`,     s.stop_loss_premium ? `₹${s.stop_loss_premium}` : "—", "put-val");
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Lots`,   s.lots_recommended ? `${s.lots_recommended} lot(s)` : "—");
 
-  // Reasoning — friendly post-1pm cutoff message if applicable
+  // Reasoning — friendly post-1:30pm cutoff message if applicable
   const reasoningEl = document.getElementById(`${sym === "NIFTY" ? "nifty" : "bn"}Reasoning`);
-  const isPost1pm = s.is_post_1pm === true ||
-                    s.source === "post_1pm_break" ||
-                    (s.action_summary && s.action_summary.includes("do not trade now")) ||
-                    (s.trading_window && (s.trading_window.includes("ended at 1:00 PM") || s.trading_window.includes("After 1:00 PM")));
+  const isPost130pm = s.is_post_1pm === true ||
+                      s.source === "post_1pm_break" ||
+                      (s.action_summary && s.action_summary.includes("do not trade now")) ||
+                      (s.trading_window && (s.trading_window.includes("ended at 1:30 PM") || s.trading_window.includes("After 1:30 PM")));
 
-  if (isPost1pm) {
+  if (isPost130pm) {
     reasoningEl.textContent =
-      "🛑 TRADING CLOSED FOR TODAY (After 1:00 PM IST)\n" +
+      "🛑 TRADING CLOSED FOR TODAY (After 1:30 PM IST)\n" +
       "• Go do your work, please do not trade now.\n" +
-      "• Intraday trading window is 9:30 AM to 1:00 PM IST only.\n" +
+      "• Intraday trading window is 9:20 AM to 1:30 PM IST only.\n" +
       "• Preserving capital and eliminating late-afternoon theta decay.\n" +
-      "• Signals will resume tomorrow morning at 9:30 AM IST.";
+      "• Signals will resume tomorrow morning at 9:20 AM IST.";
   } else {
     reasoningEl.textContent = s.reasoning || "—";
   }
@@ -357,16 +357,16 @@ function signalBoxClass(sig) {
 }
 
 function signalMeta(s, sym) {
-  const isPost1pm = s.is_post_1pm === true ||
-                    s.source === "post_1pm_break" ||
-                    (s.action_summary && s.action_summary.includes("do not trade now")) ||
-                    (s.trading_window && (s.trading_window.includes("ended at 1:00 PM") || s.trading_window.includes("After 1:00 PM")));
+  const isPost130pm = s.is_post_1pm === true ||
+                      s.source === "post_1pm_break" ||
+                      (s.action_summary && s.action_summary.includes("do not trade now")) ||
+                      (s.trading_window && (s.trading_window.includes("ended at 1:30 PM") || s.trading_window.includes("After 1:30 PM")));
 
-  if (isPost1pm) {
+  if (isPost130pm) {
     return {
       cls: "wait",
       emoji: "🛑",
-      label: "TRADING CLOSED (AFTER 1 PM)",
+      label: "TRADING CLOSED (AFTER 1:30 PM)",
       subLabel: "Go do your work, please do not trade now"
     };
   }
@@ -385,7 +385,7 @@ function signalMeta(s, sym) {
       cls: "wait",
       emoji: "⏳",
       label: "PRE-OPEN NOISE FILTER",
-      subLabel: "Trading window begins at 9:30 AM IST"
+      subLabel: "Trading window begins at 9:20 AM IST"
     };
   }
 
