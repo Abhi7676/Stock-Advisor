@@ -129,6 +129,7 @@ def _market_closed_signal(analysis: dict) -> dict:
         "bias_score": analysis.get("bias_score", 0),
         "data_source": analysis.get("data_source", "unknown"),
         "source": "post_1pm_break" if is_post_1pm else "market_closed",
+        "is_post_1pm": is_post_1pm,
         "llm_model": "Session Closed",
         "llm_inference_time": 0,
         "trading_window": "Trading Window: 9:30 AM – 1:00 PM IST",
@@ -807,6 +808,8 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
         signal["action_summary"] = "Go do your work, please do not trade now" if is_post_1pm else "HOLD CASH — Wait for directional confirmation"
         signal["exit_rule"] = "No trading after 1:00 PM IST" if is_post_1pm else "Do not enter position while market is consolidating"
 
+    now_ist = _get_ist_now()
+    signal["is_post_1pm"] = ((now_ist.hour * 60 + now_ist.minute) >= (13 * 60)) if sig_name not in ("BUY_CALL", "BUY_PUT") else False
     signal["lot_size"] = lot_size
     signal["symbol"] = symbol
     signal["nearest_expiry"] = analysis.get("nearest_expiry", "N/A")
@@ -1172,6 +1175,7 @@ def _rule_based_signal(analysis: dict) -> dict:
         "bias_score": bias_score,
         "data_source": analysis.get("data_source", "unknown"),
         "source": "post_1pm_break" if is_post_1pm else "rule_based",
+        "is_post_1pm": is_post_1pm,
         "llm_model": "Session Closed" if is_post_1pm else "Rule-Based (Enhanced v2)",
         "llm_inference_time": 0,
         "trading_window": "Trading window ended at 1:00 PM IST" if is_post_1pm else window_reason,

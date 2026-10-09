@@ -312,7 +312,12 @@ function renderSignal(sym, json) {
 
   // Reasoning — friendly post-1pm cutoff message if applicable
   const reasoningEl = document.getElementById(`${sym === "NIFTY" ? "nifty" : "bn"}Reasoning`);
-  if (s.source === "post_1pm_break" || (s.action_summary && s.action_summary.includes("do not trade now")) || s.source === "midday_break") {
+  const isPost1pm = s.is_post_1pm === true ||
+                    s.source === "post_1pm_break" ||
+                    (s.action_summary && s.action_summary.includes("do not trade now")) ||
+                    (s.trading_window && (s.trading_window.includes("ended at 1:00 PM") || s.trading_window.includes("After 1:00 PM")));
+
+  if (isPost1pm) {
     reasoningEl.textContent =
       "🛑 TRADING CLOSED FOR TODAY (After 1:00 PM IST)\n" +
       "• Go do your work, please do not trade now.\n" +
@@ -352,7 +357,12 @@ function signalBoxClass(sig) {
 }
 
 function signalMeta(s, sym) {
-  if (s.source === "post_1pm_break" || (s.action_summary && s.action_summary.includes("do not trade now")) || (s.trading_window && s.trading_window.includes("1:00 PM"))) {
+  const isPost1pm = s.is_post_1pm === true ||
+                    s.source === "post_1pm_break" ||
+                    (s.action_summary && s.action_summary.includes("do not trade now")) ||
+                    (s.trading_window && (s.trading_window.includes("ended at 1:00 PM") || s.trading_window.includes("After 1:00 PM")));
+
+  if (isPost1pm) {
     return {
       cls: "wait",
       emoji: "🛑",
@@ -360,23 +370,36 @@ function signalMeta(s, sym) {
       subLabel: "Go do your work, please do not trade now"
     };
   }
+
   if (s.source === "market_closed") {
     return {
-      cls: "wait", emoji: "🛑", label: "TRADING CLOSED (AFTER 1 PM)",
-      subLabel: "Go do your work, please do not trade now"
+      cls: "wait",
+      emoji: "🌙",
+      label: "MARKET CLOSED",
+      subLabel: "Session opens at 9:15 AM IST (Mon–Fri)"
     };
   }
+
+  if (s.trading_window && s.trading_window.includes("opening noise filter")) {
+    return {
+      cls: "wait",
+      emoji: "⏳",
+      label: "PRE-OPEN NOISE FILTER",
+      subLabel: "Trading window begins at 9:30 AM IST"
+    };
+  }
+
   if (s.signal === "BUY_CALL") return {
-    cls: "call", emoji: "\ud83d\udcc8", label: "BUY CALL \u2705",
-    subLabel: `${s.strike} CE | Target +13% (₹${s.target_premium || "?"}) | Cost: \u20b9${s.estimated_cost_inr || "?"}`
+    cls: "call", emoji: "📈", label: "BUY CALL ✅",
+    subLabel: `${s.strike} CE | Target +13% (₹${s.target_premium || "?"}) | Cost: ₹${s.estimated_cost_inr || "?"}`
   };
   if (s.signal === "BUY_PUT") return {
-    cls: "put", emoji: "\ud83d\udcc9", label: "BUY PUT \ud83d\udd34",
-    subLabel: `${s.strike} PE | Target +13% (₹${s.target_premium || "?"}) | Cost: \u20b9${s.estimated_cost_inr || "?"}`
+    cls: "put", emoji: "📉", label: "BUY PUT 🔴",
+    subLabel: `${s.strike} PE | Target +13% (₹${s.target_premium || "?"}) | Cost: ₹${s.estimated_cost_inr || "?"}`
   };
   return {
-    cls: "wait", emoji: "\u23f8\ufe0f", label: "WAIT / AVOID",
-    subLabel: "No clear signal \u2014 stay on sidelines"
+    cls: "wait", emoji: "⏸️", label: "WAIT / AVOID",
+    subLabel: s.action_summary || "No clear signal — stay on sidelines"
   };
 }
 

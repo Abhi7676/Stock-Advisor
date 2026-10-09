@@ -12,8 +12,8 @@ After creating the bot, send it /start once so it can message you.
 import logging
 import os
 import threading
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone, timedelta
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,11 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
 
 def _ist_now() -> str:
-    return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %I:%M %p IST")
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y %I:%M %p IST")
+    except Exception:
+        return datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%d %b %Y %I:%M %p IST")
 
 
 def _build_telegram_message(signal: dict) -> str:
@@ -100,6 +104,31 @@ def _send_telegram(signal: dict):
                 f"✅ Telegram alert sent: {signal.get('symbol')} "
                 f"{signal.get('signal')} @ ₹{signal.get('entry_premium')}"
             )
+        elif resp.status_code == 400:
+            logger.warning(f"Telegram MarkdownV2 parse failed: {resp.text[:200]} — retrying plain text")
+            sym = signal.get("symbol", "?")
+            sig = signal.get("signal", "?")
+            strike = signal.get("strike", "?")
+            otype = signal.get("option_type", "?")
+            prem = signal.get("entry_premium") or 0
+            tgt = signal.get("target_premium") or 0
+            sl = signal.get("stop_loss_premium") or 0
+            plain_text = (
+                f"🔔 F&O SIGNAL ALERT — {sym}\n"
+                f"{sig}: {strike} {otype}\n"
+                f"Entry: ₹{prem} | Target: ₹{tgt} (+13%) | SL: ₹{sl}\n"
+                f"Spot: ₹{signal.get('ltp', 0):,} | Conf: {signal.get('confidence', 0)}%\n"
+                f"Time: {_ist_now()}"
+            )
+            fallback_resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": plain_text},
+                timeout=12,
+            )
+            if fallback_resp.ok:
+                logger.info(f"✅ Telegram plain-text alert delivered successfully: {sym} {sig}")
+            else:
+                logger.warning(f"Telegram plain-text fallback failed: {fallback_resp.text[:300]}")
         else:
             logger.warning(f"Telegram alert failed: HTTP {resp.status_code} — {resp.text[:300]}")
     except Exception as e:
