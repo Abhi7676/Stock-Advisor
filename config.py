@@ -92,7 +92,7 @@ PCR_THRESHOLDS = {
 
 # ─── Market Hours (IST) ────────────────────────────────────
 MARKET_OPEN = time(9, 15)
-MARKET_CLOSE = time(15, 0)     # 3:00 PM IST — trading window closes & open trades square off
+MARKET_CLOSE = time(15, 40)    # 3:40 PM IST — trading window closes & open trades square off
 PRE_OPEN = time(9, 0)
 
 # ─── User Budget Settings ─────────────────────────────────

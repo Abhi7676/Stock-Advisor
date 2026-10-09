@@ -73,14 +73,14 @@ def _get_ist_now():
 
 
 def _is_market_open() -> bool:
-    """Returns True if current IST time is within NSE trading hours (9:15–15:00) on a weekday."""
+    """Returns True if current IST time is within NSE trading hours (9:15–15:40) on a weekday."""
     now = _get_ist_now()
     day = now.weekday()  # 0=Mon, 6=Sun
     if day >= 5:  # Weekend
         return False
     h, m = now.hour, now.minute
     mins = h * 60 + m
-    return (9 * 60 + 15) <= mins < (15 * 60)
+    return (9 * 60 + 15) <= mins < (15 * 60 + 40)
 
 
 def _market_closed_signal(analysis: dict) -> dict:

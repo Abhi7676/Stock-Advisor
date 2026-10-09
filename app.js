@@ -82,7 +82,7 @@ function checkMarketStatus() {
   const day = ist.getDay(); // 0=Sun, 6=Sat
 
   const isWeekday = day >= 1 && day <= 5;
-  const isOpen = isWeekday && mins >= (9 * 60 + 15) && mins < (15 * 60 + 30);
+  const isOpen = isWeekday && mins >= (9 * 60 + 15) && mins < (15 * 60 + 40);
 
   const pill = document.getElementById("marketStatusPill");
   const dot = document.getElementById("marketPulseDot");
@@ -676,7 +676,7 @@ function renderHistory(rows) {
   if (!trades.length) {
     container.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-3);font-size:0.82rem">
       📊 <strong>No Trades Executed Yet</strong><br>
-      <span style="font-size:0.75rem;color:var(--text-3)">Signal History shows <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades — closed at <strong>13% profit target</strong>, SL hit, or squared off at market close (3:00 PM IST).</span>
+      <span style="font-size:0.75rem;color:var(--text-3)">Signal History shows <strong>BUY CALL</strong> and <strong>BUY PUT</strong> trades — closed at <strong>13% profit target</strong>, SL hit, or squared off at market close (3:40 PM IST).</span>
     </div>`;
     return;
   }
@@ -735,8 +735,8 @@ function renderHistory(rows) {
             ? "\ud83c\udfaf 13% Target Reached"
             : row.status?.includes("STOP LOSS")
             ? "\ud83d\uded1 Stop Loss Exit"
-            : (row.status?.includes("3:00 PM") || row.status?.includes("SQUARED OFF"))
-            ? "\u23f1\ufe0f 3:00 PM Close"
+            : (row.status?.includes("3:40 PM") || row.status?.includes("3:00 PM") || row.status?.includes("SQUARED OFF"))
+            ? "\u23f1\ufe0f 3:40 PM Close"
             : "Trade Result (% P&amp;L)"
         }</div>
       </div>

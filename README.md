@@ -17,7 +17,7 @@ A **100% free, real-time AI Options Trading Signal Advisor** for Nifty 50 & Bank
   - **EMA (9, 21)** — Golden/Death cross detection
   - **Supertrend** — Buy/Sell trend signal
   - **Composite Bias Score** — All signals combined into -10 to +10 score
-- 💰 **₹10,000 Budget Optimizer**: Tells you exact strike, how many lots, cost, 13% target premium, and 8% stop-loss (auto square-off at 3:00 PM IST close)
+- 💰 **₹10,000 Budget Optimizer**: Tells you exact strike, how many lots, cost, 13% target premium, and 8% stop-loss (auto square-off at 3:40 PM IST close)
 - ⏱️ **Auto-Refresh every 15 seconds** during market hours
 - 📋 **Signal History Log**: All past CALL/PUT signals saved to Neon PostgreSQL / SQLite database
 - 📲 **Telegram Signal Alerts**: Instant mobile notifications when BUY CALL / BUY PUT triggers with entry, +13% target, and stop loss!
@@ -110,7 +110,7 @@ Stock Market/
 - **Entry Premium**: Suggested entry price
 - **Target Premium**: Exit when +13% profit on premium is made
 - **Stop Loss**: Exit at -8% on premium (protect capital)
-- **Market Close**: Auto square-off remaining open positions at 3:00 PM IST close
+- **Market Close**: Auto square-off remaining open positions at 3:40 PM IST close
 - **Lots**: How many lots with ₹5,000 risk allocation
 
 ---
@@ -123,7 +123,7 @@ USER_BUDGET_INR = 10000        # Your total capital
 RISK_PER_TRADE_PCT = 0.5       # Max 50% per trade (₹5000)
 PROFIT_TARGET_PCT = 0.13       # Target +13% on premium (stops immediately on hit)
 STOP_LOSS_PCT = 0.08           # Stop at -8% loss on premium
-MARKET_CLOSE = time(15, 0)     # 3:00 PM IST market close / auto square-off
+MARKET_CLOSE = time(15, 40)    # 3:40 PM IST market close / auto square-off
 NSE_REFRESH_INTERVAL = 60      # Refresh interval in seconds
 ```
 
