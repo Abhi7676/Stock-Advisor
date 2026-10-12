@@ -398,14 +398,6 @@ function signalMeta(s, sym) {
     };
   }
 
-  if (s.market_bias === "DAILY_LIMIT_REACHED") {
-    return {
-      cls: "wait",
-      emoji: "🛑",
-      label: "DAILY LIMIT REACHED",
-      subLabel: "Max 4 trades today — capital protection active"
-    };
-  }
 
   if (s.trading_window && (s.trading_window.includes("opening noise filter") || s.trading_window.includes("opening volatility filter") || s.trading_window.includes("Market settling"))) {
     return {

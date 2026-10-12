@@ -364,22 +364,6 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 except Exception as ce:
                     logger.warning(f"Cooldown parse error: {ce}")
 
-            # ── Check C: Maximum Daily Trades Cap (Capital Protection) ──
-            max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 4)
-            today_prefix = datetime.now(_IST).strftime("%Y-%m-%d")
-            day_cnt_row = conn.execute("""
-                SELECT count(*) as cnt FROM signal_history
-                WHERE symbol = ? AND created_at LIKE ?
-            """, (symbol, f"{today_prefix}%")).fetchone()
-            day_cnt = (day_cnt_row["cnt"] if day_cnt_row else 0) or 0
-            if day_cnt >= max_daily:
-                logger.info(
-                    f"Skipping trade for {symbol}: Max daily trades reached ({day_cnt}/{max_daily})."
-                )
-                conn.commit()
-                conn.close()
-                return
-
             entry_p = signal.get("entry_premium", 0)
             conn.execute("""
                 INSERT INTO signal_history

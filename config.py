@@ -113,7 +113,6 @@ ENTRY_THRESHOLDS = {
 
 # ─── Trade Frequency, Cooldown & Overtrading Protection ───
 TRADE_COOLDOWN_MINUTES = 15     # Hold/cooling period (mins) after any trade closes before next signal on same index
-MAX_DAILY_TRADES_PER_SYMBOL = 4 # Maximum completed trades per index per day to strictly protect capital
 
 # ─── Google Gemini API Settings (Free Tier) ──────────────────
 # Get your free API key from: https://aistudio.google.com/app/apikey

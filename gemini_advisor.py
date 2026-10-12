@@ -999,32 +999,6 @@ def _rule_based_signal(analysis: dict) -> dict:
         except Exception:
             pass
 
-    # ── Check C: Maximum Daily Trades Cap (Capital Protection) ──
-    max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 4)
-    today_trades = db.get_today_trade_count(symbol)
-    if today_trades >= max_daily:
-        return {
-            "signal": "WAIT", "confidence": 0,
-            "strike": atm, "option_type": "NONE",
-            "entry_premium": 0, "target_premium": 0, "stop_loss_premium": 0,
-            "lots_recommended": 0, "estimated_cost_inr": 0,
-            "max_profit_inr": 0, "max_loss_inr": 0, "lot_size": lot_size,
-            "reasoning": (
-                f"🛑 DAILY TRADE LIMIT REACHED ({today_trades}/{max_daily} trades today):\n"
-                f"• Maximum {max_daily} intraday trades completed today for {symbol}\n"
-                f"• Trading halted for remainder of today on {symbol} to strictly preserve capital\n"
-                f"• Prevents churn and broker commission erosion under ₹10,000 budget"
-            ),
-            "key_risk": "Max daily trades reached",
-            "market_bias": "DAILY_LIMIT_REACHED", "trade_tip": "Daily quota filled. Preserve your capital for tomorrow.",
-            "holding_time": "Session Limit Reached", "action_summary": f"Daily limit reached ({today_trades}/{max_daily})",
-            "exit_rule": "Limit reached", "symbol": symbol,
-            "nearest_expiry": expiry, "atm_strike": atm, "ltp": ltp,
-            "bias_score": bias_score, "data_source": "daily_limit",
-            "source": "rule_based (daily_limit)", "llm_model": "Daily Limit Reached",
-            "llm_inference_time": 0, "trading_window": "Daily Limit Reached", "consecutive_losses": 0,
-        }
-
     # ── Gate 1: Trading Window Filter ──────────────────────
     window_ok, window_reason = _is_good_trading_window()
 
