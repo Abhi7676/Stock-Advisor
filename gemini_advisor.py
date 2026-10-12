@@ -1000,7 +1000,7 @@ def _rule_based_signal(analysis: dict) -> dict:
             pass
 
     # ── Check C: Maximum Daily Trades Cap (Capital Protection) ──
-    max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 3)
+    max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 4)
     today_trades = db.get_today_trade_count(symbol)
     if today_trades >= max_daily:
         return {

@@ -365,7 +365,7 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                     logger.warning(f"Cooldown parse error: {ce}")
 
             # ── Check C: Maximum Daily Trades Cap (Capital Protection) ──
-            max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 3)
+            max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 4)
             today_prefix = datetime.now(_IST).strftime("%Y-%m-%d")
             day_cnt_row = conn.execute("""
                 SELECT count(*) as cnt FROM signal_history

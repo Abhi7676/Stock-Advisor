@@ -403,7 +403,7 @@ function signalMeta(s, sym) {
       cls: "wait",
       emoji: "🛑",
       label: "DAILY LIMIT REACHED",
-      subLabel: "Max 3 trades today — capital protection active"
+      subLabel: "Max 4 trades today — capital protection active"
     };
   }
 
