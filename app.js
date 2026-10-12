@@ -321,9 +321,9 @@ function renderSignal(sym, json) {
     reasoningEl.textContent =
       "🛑 TRADING CLOSED FOR TODAY (After 1:30 PM IST)\n" +
       "• Go do your work, please do not trade now.\n" +
-      "• Intraday trading window is 9:20 AM to 1:30 PM IST only.\n" +
+      "• Intraday trading window is 9:45 AM to 1:30 PM IST only.\n" +
       "• Preserving capital and eliminating late-afternoon theta decay.\n" +
-      "• Signals will resume tomorrow morning at 9:20 AM IST.";
+      "• Signals will resume tomorrow morning at 9:45 AM IST.";
   } else {
     reasoningEl.textContent = s.reasoning || "—";
   }
@@ -407,12 +407,12 @@ function signalMeta(s, sym) {
     };
   }
 
-  if (s.trading_window && s.trading_window.includes("opening noise filter")) {
+  if (s.trading_window && (s.trading_window.includes("opening noise filter") || s.trading_window.includes("opening volatility filter") || s.trading_window.includes("Market settling"))) {
     return {
       cls: "wait",
       emoji: "⏳",
-      label: "PRE-OPEN NOISE FILTER",
-      subLabel: "Trading window begins at 9:20 AM IST"
+      label: "OPENING VOLATILITY FILTER",
+      subLabel: "Signals begin at 9:45 AM IST (after opening chop settles)"
     };
   }
 

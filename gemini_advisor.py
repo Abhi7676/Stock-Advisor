@@ -100,13 +100,13 @@ def _market_closed_signal(analysis: dict) -> dict:
     reasoning = (
         "🛑 TRADING CLOSED (After 1:30 PM IST):\n"
         "• Go do your work, please do not trade now.\n"
-        "• Trading window is 9:20 AM to 1:30 PM IST only.\n"
+        "• Trading window is 9:45 AM to 1:30 PM IST only.\n"
         "• Preserving capital and eliminating late-day decay.\n"
-        "• Signals will resume tomorrow morning at 9:20 AM IST."
+        "• Signals will resume tomorrow morning at 9:45 AM IST."
     ) if is_post_130pm else (
         "MARKET CLOSED — NO TRADING:\n"
         "• NSE trading session opens at 9:15 AM IST (Mon–Fri)\n"
-        "• Signals will activate during next trading session"
+        "• Signals activate at 9:45 AM IST (allowing opening 30-min volatility to settle)"
     )
 
     return {
@@ -133,7 +133,7 @@ def _market_closed_signal(analysis: dict) -> dict:
         "is_post_1pm": is_post_130pm,
         "llm_model": "Session Closed",
         "llm_inference_time": 0,
-        "trading_window": "Trading Window: 9:20 AM – 1:30 PM IST",
+        "trading_window": "Trading Window: 9:45 AM – 1:30 PM IST",
         "consecutive_losses": 0,
     }
 
@@ -295,7 +295,7 @@ CRITICAL REQUIREMENT — MINIMUM 13% PROFIT POTENTIAL:
 • ONLY recommend BUY_CALL or BUY_PUT if the setup has clear high-conviction potential to generate a MINIMUM OF +13% PROFIT on the option premium before reaching resistance/support walls.
 • Target premium MUST be at least +13% above entry premium (target_premium >= entry_premium * 1.13).
 • If the room to resistance/support walls or market momentum cannot deliver at least 13% profit, you MUST return "WAIT".
-• Active trading window is 9:20 AM to 1:30 PM IST only. No signals after 1:30 PM IST.
+• Active trading window is 9:45 AM to 1:30 PM IST only. No signals after 1:30 PM IST.
 
 Respond ONLY with this JSON (no markdown, no extra text):
 {{
@@ -836,24 +836,24 @@ def _is_good_trading_window() -> tuple:
     """
     Returns (is_allowed, reason_str) based on IST time-of-day.
     Trading schedule:
-      - Active Trading Window: 9:20 AM – 1:30 PM IST (Morning & European open momentum session)
+      - Active Trading Window: 9:45 AM – 1:30 PM IST (Allows opening 30-min volatility to settle)
       - After 1:30 PM IST: All signals STOPPED for the day.
         Message: 'Go do your work, please do not trade now'
-    First 5 mins (9:15–9:20) skipped — opening auction noise / wide spreads.
+    First 30 mins (9:15–9:45) skipped — opening volatility & gap settling.
     """
     now = _get_ist_now()
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
-    market_open  = 9 * 60 + 20    # 9:20 AM IST (opening noise filter)
+    market_open  = 9 * 60 + 45    # 9:45 AM IST (opening 30-min volatility filter)
     trade_cutoff = 13 * 60 + 30   # 1:30 PM IST (Trading strictly ends for the day)
 
     if mins < market_open:
         wait = market_open - mins
-        return False, f"Market opens at 9:20 AM IST ({wait} min away — opening noise filter)"
+        return False, f"Market settling: Signals begin at 9:45 AM IST ({wait} min away — opening volatility filter)"
     if mins < trade_cutoff:
         remaining = trade_cutoff - mins
-        return True, f"Trading window active (9:20 AM – 1:30 PM IST, {remaining} min remaining)"
+        return True, f"Trading window active (9:45 AM – 1:30 PM IST, {remaining} min remaining)"
     return False, "Trading ended for today (After 1:30 PM IST) — Go do your work, please do not trade now"
 
 
@@ -980,15 +980,16 @@ def _rule_based_signal(analysis: dict) -> dict:
                     "lots_recommended": 0, "estimated_cost_inr": 0,
                     "max_profit_inr": 0, "max_loss_inr": 0, "lot_size": lot_size,
                     "reasoning": (
-                        f"⏱️ POST-TRADE COOLDOWN ({rem} MIN REMAINING):\n"
+                        f"⏱️ POST-TRADE COOLDOWN ({rem} MIN REMAINING of {cooldown_mins}m HOLD):\n"
                         f"• Recent trade ({last_sig}) exited at {closed_time} IST ({last_res})\n"
-                        f"• Enforcing mandatory {cooldown_mins}-minute cooling period to let market volatility settle\n"
-                        f"• Eliminates overtrading, revenge trading, and rapid whipsaws\n"
+                        f"• Mandatory {cooldown_mins}-minute cooling period in progress ({rem} min remaining)\n"
+                        f"• Allows post-exit volatility to settle before scanning for new setups\n"
+                        f"• Eliminates rapid-fire overtrading and whipsaws\n"
                         f"• Next signal scan activates in {rem} minutes"
                     ),
-                    "key_risk": f"Post-trade cooldown ({rem}m left)",
-                    "market_bias": "COOLDOWN", "trade_tip": f"Patience: Market settling for {rem} more minutes.",
-                    "holding_time": "Cooldown Hold", "action_summary": f"Post-trade cooldown ({rem}m left)",
+                    "key_risk": f"Post-trade cooldown ({rem}m left of {cooldown_mins}m)",
+                    "market_bias": "COOLDOWN", "trade_tip": f"Patience: {rem}m remaining of {cooldown_mins}m hold period.",
+                    "holding_time": "Cooldown Hold", "action_summary": f"Post-trade cooldown ({rem}m left of {cooldown_mins}m)",
                     "exit_rule": "Cooldown active", "symbol": symbol,
                     "nearest_expiry": expiry, "atm_strike": atm, "ltp": ltp,
                     "bias_score": bias_score, "data_source": "post_trade_cooldown",
@@ -1251,9 +1252,9 @@ def _rule_based_signal(analysis: dict) -> dict:
         reasoning = (
             "🛑 TRADING CLOSED FOR TODAY (After 1:30 PM IST):\n"
             "• Go do your work, please do not trade now.\n"
-            "• Intraday trading window is 9:20 AM to 1:30 PM IST only.\n"
+            "• Intraday trading window is 9:45 AM to 1:30 PM IST only.\n"
             "• Preserving capital and eliminating afternoon theta decay.\n"
-            "• Signals will resume tomorrow morning at 9:20 AM IST."
+            "• Signals will resume tomorrow morning at 9:45 AM IST."
         )
 
     side = "call" if otype in ("CE", "NONE") else "put"
