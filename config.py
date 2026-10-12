@@ -111,6 +111,10 @@ ENTRY_THRESHOLDS = {
     "BANKNIFTY": 4,         # Bank Nifty: ±4 score required (scale: -5 to +5)
 }
 
+# ─── Trade Frequency, Cooldown & Overtrading Protection ───
+TRADE_COOLDOWN_MINUTES = 15     # Hold/cooling period (mins) after any trade closes before next signal on same index
+MAX_DAILY_TRADES_PER_SYMBOL = 3 # Maximum completed trades per index per day to strictly protect capital
+
 # ─── Google Gemini API Settings (Free Tier) ──────────────────
 # Get your free API key from: https://aistudio.google.com/app/apikey
 # Standard production models have 1,500 requests/day & 15 req/min on free tier

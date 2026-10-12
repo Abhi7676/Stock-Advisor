@@ -320,43 +320,95 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                 WHERE id = ?
             """, (exit_p, pnl_pct, pnl_amt, new_status, closed_at, row_id))
 
-        # 2. Log NEW trade only during market hours (before 3:40 PM IST) if BUY_CALL/BUY_PUT and no active trade
+        # 2. Log NEW trade only during market hours (before 3:40 PM IST) if BUY_CALL/BUY_PUT
         if not market_closed and sig_name in ("BUY_CALL", "BUY_PUT"):
-            recent_trade = conn.execute("""
-                SELECT id FROM signal_history
-                WHERE symbol = ? AND signal = ? AND status LIKE 'ACTIVE%'
-            """, (symbol, sig_name)).fetchone()
+            # ── Check A: Strictly Single Active Position per Index ──
+            # Prevents taking BUY PUT while BUY CALL is still active, or vice-versa!
+            active_trade = conn.execute("""
+                SELECT id, signal, strike, option_type, created_at FROM signal_history
+                WHERE symbol = ? AND status LIKE 'ACTIVE%'
+            """, (symbol,)).fetchone()
 
-            if not recent_trade:
-                entry_p = signal.get("entry_premium", 0)
-                conn.execute("""
-                    INSERT INTO signal_history
-                    (symbol, signal, confidence, strike, option_type, entry_premium,
-                     target_premium, sl_premium, exit_premium, pnl_pct, pnl_amount,
-                     ltp, bias_score, reasoning, source, status, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, (
-                    symbol,
-                    sig_name,
-                    signal.get("confidence"),
-                    signal.get("strike"),
-                    signal.get("option_type"),
-                    entry_p,
-                    signal.get("target_premium"),
-                    signal.get("stop_loss_premium"),
-                    entry_p,
-                    0.0,
-                    0.0,
-                    analysis.get("ltp"),
-                    signal.get("bias_score"),
-                    signal.get("reasoning"),
-                    signal.get("source"),
-                    "ACTIVE",
-                    _now_ist(),
-                ))
-                # ★ Fire instant alert (Telegram + Email) in background threads
-                send_signal_alert(signal)
-                logger.info(f"New signal logged + alerts triggered: {symbol} {sig_name}")
+            if active_trade:
+                logger.info(
+                    f"Holding position on {symbol}: Trade #{active_trade['id']} "
+                    f"({active_trade['signal']} {active_trade['strike']}) is currently ACTIVE — no new trades allowed."
+                )
+                conn.commit()
+                conn.close()
+                return
+
+            # ── Check B: Mandatory Post-Trade Cooldown (Hold Period) ──
+            cooldown_mins = getattr(config, "TRADE_COOLDOWN_MINUTES", 15)
+            last_closed = conn.execute("""
+                SELECT id, closed_at FROM signal_history
+                WHERE symbol = ? AND closed_at IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+            """, (symbol,)).fetchone()
+
+            if last_closed and last_closed["closed_at"]:
+                try:
+                    closed_clean = str(last_closed["closed_at"]).replace("Z", "")
+                    closed_dt = datetime.fromisoformat(closed_clean)
+                    now_naive = datetime.now(_IST).replace(tzinfo=None)
+                    elapsed_mins = (now_naive - closed_dt).total_seconds() / 60.0
+                    if elapsed_mins < cooldown_mins:
+                        rem = int(cooldown_mins - elapsed_mins) + 1
+                        logger.info(
+                            f"Skipping trade for {symbol}: In post-trade cooldown "
+                            f"({rem} min remaining after Trade #{last_closed['id']})."
+                        )
+                        conn.commit()
+                        conn.close()
+                        return
+                except Exception as ce:
+                    logger.warning(f"Cooldown parse error: {ce}")
+
+            # ── Check C: Maximum Daily Trades Cap (Capital Protection) ──
+            max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 3)
+            today_prefix = datetime.now(_IST).strftime("%Y-%m-%d")
+            day_cnt_row = conn.execute("""
+                SELECT count(*) as cnt FROM signal_history
+                WHERE symbol = ? AND created_at LIKE ?
+            """, (symbol, f"{today_prefix}%")).fetchone()
+            day_cnt = (day_cnt_row["cnt"] if day_cnt_row else 0) or 0
+            if day_cnt >= max_daily:
+                logger.info(
+                    f"Skipping trade for {symbol}: Max daily trades reached ({day_cnt}/{max_daily})."
+                )
+                conn.commit()
+                conn.close()
+                return
+
+            entry_p = signal.get("entry_premium", 0)
+            conn.execute("""
+                INSERT INTO signal_history
+                (symbol, signal, confidence, strike, option_type, entry_premium,
+                 target_premium, sl_premium, exit_premium, pnl_pct, pnl_amount,
+                 ltp, bias_score, reasoning, source, status, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                symbol,
+                sig_name,
+                signal.get("confidence"),
+                signal.get("strike"),
+                signal.get("option_type"),
+                entry_p,
+                signal.get("target_premium"),
+                signal.get("stop_loss_premium"),
+                entry_p,
+                0.0,
+                0.0,
+                analysis.get("ltp"),
+                signal.get("bias_score"),
+                signal.get("reasoning"),
+                signal.get("source"),
+                "ACTIVE",
+                _now_ist(),
+            ))
+            # ★ Fire instant alert (Telegram + Email) in background threads
+            send_signal_alert(signal)
+            logger.info(f"New signal logged + alerts triggered: {symbol} {sig_name}")
 
         conn.commit()
         conn.close()

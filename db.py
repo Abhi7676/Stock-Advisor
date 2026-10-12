@@ -127,3 +127,107 @@ def create_table_ddl() -> str:
             status TEXT DEFAULT 'ACTIVE', created_at TEXT, closed_at TEXT
         )
     """
+
+
+# ─── Query Helpers for Trade Hold, Cooldown & Risk Management ──
+
+def get_active_trade(symbol: str) -> dict | None:
+    """Returns the currently active trade for symbol if one exists."""
+    conn = None
+    try:
+        conn = connect()
+        row = conn.execute("""
+            SELECT id, symbol, signal, strike, option_type, entry_premium, created_at, status
+            FROM signal_history
+            WHERE symbol = ? AND status LIKE 'ACTIVE%'
+            ORDER BY id DESC LIMIT 1
+        """, (symbol,)).fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_last_closed_trade(symbol: str) -> dict | None:
+    """Returns the most recently closed trade for symbol."""
+    conn = None
+    try:
+        conn = connect()
+        row = conn.execute("""
+            SELECT id, symbol, signal, strike, option_type, entry_premium, exit_premium, pnl_pct, status, created_at, closed_at
+            FROM signal_history
+            WHERE symbol = ? AND closed_at IS NOT NULL
+            ORDER BY id DESC LIMIT 1
+        """, (symbol,)).fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_today_trade_count(symbol: str) -> int:
+    """Returns count of all trades entered today for symbol."""
+    conn = None
+    try:
+        conn = connect()
+        from datetime import datetime, timezone, timedelta
+        now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        today_prefix = now_ist.strftime("%Y-%m-%d")
+        row = conn.execute("""
+            SELECT count(*) as cnt FROM signal_history
+            WHERE symbol = ? AND created_at LIKE ?
+        """, (symbol, f"{today_prefix}%")).fetchone()
+        if row:
+            return row["cnt"] if "cnt" in row else row[0]
+        return 0
+    except Exception as e:
+        return 0
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_today_consecutive_losses(symbol: str) -> int:
+    """Returns count of consecutive losses today for symbol directly from database."""
+    conn = None
+    try:
+        conn = connect()
+        from datetime import datetime, timezone, timedelta
+        now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        today_prefix = now_ist.strftime("%Y-%m-%d")
+        rows = conn.execute("""
+            SELECT pnl_pct, status FROM signal_history
+            WHERE symbol = ? AND created_at LIKE ? AND closed_at IS NOT NULL
+            ORDER BY id DESC LIMIT 5
+        """, (symbol, f"{today_prefix}%")).fetchall()
+        consec = 0
+        for r in rows:
+            pnl = r["pnl_pct"] or 0
+            status = r["status"] or ""
+            if pnl < 0 or "STOP LOSS" in status:
+                consec += 1
+            else:
+                break
+        return consec
+    except Exception as e:
+        return 0
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+

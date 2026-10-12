@@ -380,6 +380,33 @@ function signalMeta(s, sym) {
     };
   }
 
+  if (s.market_bias === "HOLDING_ACTIVE") {
+    return {
+      cls: "wait",
+      emoji: "⏳",
+      label: "POSITION ACTIVE (HOLD)",
+      subLabel: s.action_summary || "Managing open trade — target +13% or SL"
+    };
+  }
+
+  if (s.market_bias === "COOLDOWN") {
+    return {
+      cls: "wait",
+      emoji: "⏱️",
+      label: "POST-TRADE COOLDOWN",
+      subLabel: s.action_summary || "Holding period active — letting market settle"
+    };
+  }
+
+  if (s.market_bias === "DAILY_LIMIT_REACHED") {
+    return {
+      cls: "wait",
+      emoji: "🛑",
+      label: "DAILY LIMIT REACHED",
+      subLabel: "Max 3 trades today — capital protection active"
+    };
+  }
+
   if (s.trading_window && s.trading_window.includes("opening noise filter")) {
     return {
       cls: "wait",

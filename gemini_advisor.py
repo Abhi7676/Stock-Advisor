@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 
 import config
+import db
 
 logger = logging.getLogger(__name__)
 
@@ -890,7 +891,13 @@ def record_trade_result(symbol: str, is_win: bool):
 
 
 def _get_consecutive_losses(symbol: str) -> int:
-    """Returns current intraday consecutive losses for the symbol."""
+    """Returns current intraday consecutive losses for the symbol (DB backed)."""
+    try:
+        db_losses = db.get_today_consecutive_losses(symbol)
+        if db_losses > 0:
+            return db_losses
+    except Exception:
+        pass
     _check_daily_reset()
     return _consecutive_losses.get(symbol, 0)
 
@@ -919,6 +926,103 @@ def _rule_based_signal(analysis: dict) -> dict:
     oi = analysis.get("oi_analysis", {})
     india_vix = analysis.get("india_vix", 15.0)
     max_pain_dist_pct = analysis.get("max_pain_dist_pct", 999.0)
+
+    # ── Check A: Strictly Single Active Position per Index ──
+    # If a trade is currently open (e.g. CE), strictly block new signals (no PE, no duplicate CE)
+    active_trade = db.get_active_trade(symbol)
+    if active_trade:
+        act_sig = active_trade.get("signal", "TRADE")
+        act_strike = active_trade.get("strike", atm)
+        act_type = active_trade.get("option_type", "")
+        act_entry = active_trade.get("entry_premium", 0.0)
+        act_time = str(active_trade.get("created_at", ""))[11:16]
+        return {
+            "signal": "WAIT", "confidence": 0,
+            "strike": act_strike, "option_type": act_type or "NONE",
+            "entry_premium": act_entry, "target_premium": 0, "stop_loss_premium": 0,
+            "lots_recommended": 0, "estimated_cost_inr": 0,
+            "max_profit_inr": 0, "max_loss_inr": 0, "lot_size": lot_size,
+            "reasoning": (
+                f"⏳ ACTIVE POSITION IN PROGRESS ON {symbol}:\n"
+                f"• Currently holding: {act_sig} {act_strike} {act_type} (Entry ₹{act_entry:.2f} at {act_time} IST)\n"
+                f"• Strict rule: 1 active trade at a time — no new signals until position exits on +13% target or stop loss\n"
+                f"• Prevents conflicting opposite positions (e.g. buying PUT while holding CALL) and protects capital"
+            ),
+            "key_risk": f"Holding {act_sig} {act_strike} {act_type}",
+            "market_bias": "HOLDING_ACTIVE", "trade_tip": "Manage active position according to target and SL rules.",
+            "holding_time": "Position Active", "action_summary": f"Holding {act_sig} {act_strike} {act_type}",
+            "exit_rule": "Exit on +13% profit or stop loss", "symbol": symbol,
+            "nearest_expiry": expiry, "atm_strike": atm, "ltp": ltp,
+            "bias_score": bias_score, "data_source": "active_trade_hold",
+            "source": "rule_based (active_trade_hold)", "llm_model": "Position Active Hold",
+            "llm_inference_time": 0, "trading_window": "Holding Active Position", "consecutive_losses": 0,
+        }
+
+    # ── Check B: Mandatory Post-Trade Cooldown (Hold Period) ──
+    cooldown_mins = getattr(config, "TRADE_COOLDOWN_MINUTES", 15)
+    last_closed = db.get_last_closed_trade(symbol)
+    if last_closed and last_closed.get("closed_at"):
+        try:
+            closed_clean = str(last_closed["closed_at"]).replace("Z", "")
+            from datetime import datetime, timezone, timedelta
+            closed_dt = datetime.fromisoformat(closed_clean)
+            now_dt = datetime.now(timezone(timedelta(hours=5, minutes=30))).replace(tzinfo=None)
+            elapsed = (now_dt - closed_dt).total_seconds() / 60.0
+            if elapsed < cooldown_mins:
+                rem = int(cooldown_mins - elapsed) + 1
+                closed_time = closed_clean[11:16]
+                last_sig = last_closed.get("signal", "Trade")
+                last_res = last_closed.get("status", "Closed")
+                return {
+                    "signal": "WAIT", "confidence": 0,
+                    "strike": atm, "option_type": "NONE",
+                    "entry_premium": 0, "target_premium": 0, "stop_loss_premium": 0,
+                    "lots_recommended": 0, "estimated_cost_inr": 0,
+                    "max_profit_inr": 0, "max_loss_inr": 0, "lot_size": lot_size,
+                    "reasoning": (
+                        f"⏱️ POST-TRADE COOLDOWN ({rem} MIN REMAINING):\n"
+                        f"• Recent trade ({last_sig}) exited at {closed_time} IST ({last_res})\n"
+                        f"• Enforcing mandatory {cooldown_mins}-minute cooling period to let market volatility settle\n"
+                        f"• Eliminates overtrading, revenge trading, and rapid whipsaws\n"
+                        f"• Next signal scan activates in {rem} minutes"
+                    ),
+                    "key_risk": f"Post-trade cooldown ({rem}m left)",
+                    "market_bias": "COOLDOWN", "trade_tip": f"Patience: Market settling for {rem} more minutes.",
+                    "holding_time": "Cooldown Hold", "action_summary": f"Post-trade cooldown ({rem}m left)",
+                    "exit_rule": "Cooldown active", "symbol": symbol,
+                    "nearest_expiry": expiry, "atm_strike": atm, "ltp": ltp,
+                    "bias_score": bias_score, "data_source": "post_trade_cooldown",
+                    "source": "rule_based (cooldown)", "llm_model": "Post-Trade Cooldown",
+                    "llm_inference_time": 0, "trading_window": f"Cooldown ({rem}m left)", "consecutive_losses": 0,
+                }
+        except Exception:
+            pass
+
+    # ── Check C: Maximum Daily Trades Cap (Capital Protection) ──
+    max_daily = getattr(config, "MAX_DAILY_TRADES_PER_SYMBOL", 3)
+    today_trades = db.get_today_trade_count(symbol)
+    if today_trades >= max_daily:
+        return {
+            "signal": "WAIT", "confidence": 0,
+            "strike": atm, "option_type": "NONE",
+            "entry_premium": 0, "target_premium": 0, "stop_loss_premium": 0,
+            "lots_recommended": 0, "estimated_cost_inr": 0,
+            "max_profit_inr": 0, "max_loss_inr": 0, "lot_size": lot_size,
+            "reasoning": (
+                f"🛑 DAILY TRADE LIMIT REACHED ({today_trades}/{max_daily} trades today):\n"
+                f"• Maximum {max_daily} intraday trades completed today for {symbol}\n"
+                f"• Trading halted for remainder of today on {symbol} to strictly preserve capital\n"
+                f"• Prevents churn and broker commission erosion under ₹10,000 budget"
+            ),
+            "key_risk": "Max daily trades reached",
+            "market_bias": "DAILY_LIMIT_REACHED", "trade_tip": "Daily quota filled. Preserve your capital for tomorrow.",
+            "holding_time": "Session Limit Reached", "action_summary": f"Daily limit reached ({today_trades}/{max_daily})",
+            "exit_rule": "Limit reached", "symbol": symbol,
+            "nearest_expiry": expiry, "atm_strike": atm, "ltp": ltp,
+            "bias_score": bias_score, "data_source": "daily_limit",
+            "source": "rule_based (daily_limit)", "llm_model": "Daily Limit Reached",
+            "llm_inference_time": 0, "trading_window": "Daily Limit Reached", "consecutive_losses": 0,
+        }
 
     # ── Gate 1: Trading Window Filter ──────────────────────
     window_ok, window_reason = _is_good_trading_window()
@@ -986,18 +1090,28 @@ def _rule_based_signal(analysis: dict) -> dict:
         f"only {max_pain_dist_pct:.2f}% away, market makers may pin price here"
     )
 
-    # ── Gate 7: 15-min Trend Anti-Conflict Check ───────────
-    # TIGHTENED: 15-min Supertrend OR MACD must actively support the trade direction.
-    # Previously only blocked if BOTH 15m indicators opposed — now requires at least ONE to agree.
-    # This ensures we trade with the higher timeframe trend, not against it.
+    # ── Gate 7: 15-min Trend Confirmation (Higher-Timeframe Alignment) ──
+    # Requires active agreement from 15-minute timeframe indicators.
+    # Trading WITH higher-timeframe trend prevents false morning reversals & whipsaws.
     st_15m   = ta_15m.get("supertrend_signal", "NEUTRAL")
     macd_15m = ta_15m.get("macd_bias", "NEUTRAL")
-    # BUY CALL: at least one of 15-min ST or MACD must be bullish (or neutral at worst)
-    trend_15m_bull = not (st_15m == "SELL" and macd_15m == "BEARISH")  # Block only if BOTH bearish
-    # BUY PUT: at least one of 15-min ST or MACD must be bearish (or neutral at worst)
-    trend_15m_bear = not (st_15m == "BUY" and macd_15m == "BULLISH")   # Block only if BOTH bullish
-    trend_15m_reason_bull = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
-    trend_15m_reason_bear = f"15-min Supertrend={st_15m}, MACD={macd_15m}"
+
+    # BUY CALL: At least one 15m indicator must actively be BULLISH, and neither can be SELL / BEARISH
+    trend_15m_bull = (st_15m == "BUY" or macd_15m == "BULLISH") and (st_15m != "SELL" and macd_15m != "BEARISH")
+
+    # BUY PUT: At least one 15m indicator must actively be BEARISH, and neither can be BUY / BULLISH
+    trend_15m_bear = (st_15m == "SELL" or macd_15m == "BEARISH") and (st_15m != "BUY" and macd_15m != "BULLISH")
+
+    trend_15m_reason_bull = (
+        f"15-min Supertrend={st_15m}, MACD={macd_15m} ✅ actively bullish"
+        if trend_15m_bull else
+        f"15-min higher timeframe not confirmed (Supertrend={st_15m}, MACD={macd_15m})"
+    )
+    trend_15m_reason_bear = (
+        f"15-min Supertrend={st_15m}, MACD={macd_15m} ✅ actively bearish"
+        if trend_15m_bear else
+        f"15-min higher timeframe not confirmed (Supertrend={st_15m}, MACD={macd_15m})"
+    )
 
     # ── Gate 8: Minimum 13% Profit Potential & OI Clearance Filter ──
     # For an option to gain >= 13% on premium (delta ~0.50), the spot index must have
