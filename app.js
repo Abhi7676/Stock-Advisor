@@ -310,19 +310,18 @@ function renderSignal(sym, json) {
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}SL`,     s.stop_loss_premium ? `₹${s.stop_loss_premium}` : "—", "put-val");
   setVal(`${sym === "NIFTY" ? "nifty" : "bn"}Lots`,   s.lots_recommended ? `${s.lots_recommended} lot(s)` : "—");
 
-  // Reasoning — friendly post-1:30pm cutoff message if applicable
+  // Reasoning — friendly session closed message if applicable
   const reasoningEl = document.getElementById(`${sym === "NIFTY" ? "nifty" : "bn"}Reasoning`);
-  const isPost130pm = s.is_post_1pm === true ||
-                      s.source === "post_1pm_break" ||
-                      (s.action_summary && s.action_summary.includes("do not trade now")) ||
-                      (s.trading_window && (s.trading_window.includes("ended at 1:30 PM") || s.trading_window.includes("After 1:30 PM")));
+  const isSessionClosed = s.is_post_1pm === true ||
+                          s.source === "post_1pm_break" ||
+                          (s.action_summary && s.action_summary.includes("do not trade now")) ||
+                          (s.trading_window && (s.trading_window.includes("ended for today") || s.trading_window.includes("closed for today")));
 
-  if (isPost130pm) {
-    reasoningEl.textContent =
-      "🛑 TRADING CLOSED FOR TODAY (After 1:30 PM IST)\n" +
+  if (isSessionClosed) {
+    reasoningEl.textContent = s.reasoning ||
+      "🛑 TRADING CLOSED FOR TODAY\n" +
       "• Go do your work, please do not trade now.\n" +
-      "• Intraday trading window is 9:45 AM to 1:30 PM IST only.\n" +
-      "• Preserving capital and eliminating late-afternoon theta decay.\n" +
+      "• Daily trading session complete — preserving capital.\n" +
       "• Signals will resume tomorrow morning at 9:45 AM IST.";
   } else {
     reasoningEl.textContent = s.reasoning || "—";
@@ -357,17 +356,17 @@ function signalBoxClass(sig) {
 }
 
 function signalMeta(s, sym) {
-  const isPost130pm = s.is_post_1pm === true ||
-                      s.source === "post_1pm_break" ||
-                      (s.action_summary && s.action_summary.includes("do not trade now")) ||
-                      (s.trading_window && (s.trading_window.includes("ended at 1:30 PM") || s.trading_window.includes("After 1:30 PM")));
+  const isSessionClosed = s.is_post_1pm === true ||
+                          s.source === "post_1pm_break" ||
+                          (s.action_summary && s.action_summary.includes("do not trade now")) ||
+                          (s.trading_window && (s.trading_window.includes("ended for today") || s.trading_window.includes("closed for today")));
 
-  if (isPost130pm) {
+  if (isSessionClosed) {
     return {
       cls: "wait",
       emoji: "🛑",
-      label: "TRADING CLOSED (AFTER 1:30 PM)",
-      subLabel: "Go do your work, please do not trade now"
+      label: "TRADING CLOSED",
+      subLabel: "Session closed for today — preserving capital"
     };
   }
 

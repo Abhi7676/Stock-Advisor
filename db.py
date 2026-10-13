@@ -5,10 +5,11 @@ Uses PostgreSQL (psycopg2) when DATABASE_URL env var is set (production on Rende
 falls back to SQLite for local development — zero code changes needed in app.py.
 """
 import os
-from dotenv import load_dotenv
-
-# Ensure .env is loaded if present
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 
 def get_database_url() -> str:
@@ -175,18 +176,24 @@ def get_last_closed_trade(symbol: str) -> dict | None:
                 pass
 
 
-def get_today_trade_count(symbol: str) -> int:
-    """Returns count of all trades entered today for symbol."""
+def get_today_trade_count(symbol: str = None) -> int:
+    """Returns count of all trades entered today (for specific symbol or overall)."""
     conn = None
     try:
         conn = connect()
         from datetime import datetime, timezone, timedelta
         now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         today_prefix = now_ist.strftime("%Y-%m-%d")
-        row = conn.execute("""
-            SELECT count(*) as cnt FROM signal_history
-            WHERE symbol = ? AND created_at LIKE ?
-        """, (symbol, f"{today_prefix}%")).fetchone()
+        if symbol:
+            row = conn.execute("""
+                SELECT count(*) as cnt FROM signal_history
+                WHERE symbol = ? AND created_at LIKE ?
+            """, (symbol, f"{today_prefix}%")).fetchone()
+        else:
+            row = conn.execute("""
+                SELECT count(*) as cnt FROM signal_history
+                WHERE created_at LIKE ?
+            """, (f"{today_prefix}%",)).fetchone()
         if row:
             return row["cnt"] if "cnt" in row else row[0]
         return 0

@@ -94,14 +94,23 @@ def _market_closed_signal(analysis: dict) -> dict:
 
     now = _get_ist_now()
     mins = now.hour * 60 + now.minute
-    is_post_130pm = mins >= (13 * 60 + 30)
+    window_ok, window_reason = _is_good_trading_window(symbol)
+    is_post_close = mins >= (15 * 60 + 40)
+    is_post_130pm = (mins >= 13 * 60 + 30) and not window_ok
 
-    msg = "Go do your work, please do not trade now" if is_post_130pm else "Market is closed. Wait for next session."
+    msg = (
+        "Market closed at 3:40 PM IST. Wait for tomorrow's session." if is_post_close else
+        "Go do your work, please do not trade now" if is_post_130pm else
+        "Market is closed. Wait for next session."
+    )
     reasoning = (
+        "🛑 MARKET CLOSED (3:40 PM IST):\n"
+        "• All positions squared off.\n"
+        "• Signals will resume tomorrow morning at 9:45 AM IST."
+    ) if is_post_close else (
         "🛑 TRADING CLOSED (After 1:30 PM IST):\n"
         "• Go do your work, please do not trade now.\n"
-        "• Trading window is 9:45 AM to 1:30 PM IST only.\n"
-        "• Preserving capital and eliminating late-day decay.\n"
+        "• Daily trading complete — preserving capital.\n"
         "• Signals will resume tomorrow morning at 9:45 AM IST."
     ) if is_post_130pm else (
         "MARKET CLOSED — NO TRADING:\n"
@@ -124,16 +133,16 @@ def _market_closed_signal(analysis: dict) -> dict:
         "trade_tip": msg,
         "holding_time": "Session Closed",
         "action_summary": msg,
-        "exit_rule": "No trading after 1:30 PM IST",
+        "exit_rule": "Market closed" if is_post_close else "No trading after 1:30 PM IST",
         "symbol": symbol, "nearest_expiry": analysis.get("nearest_expiry", "N/A"),
         "atm_strike": atm, "ltp": ltp,
         "bias_score": analysis.get("bias_score", 0),
         "data_source": analysis.get("data_source", "unknown"),
         "source": "post_1pm_break" if is_post_130pm else "market_closed",
-        "is_post_1pm": is_post_130pm,
+        "is_post_1pm": is_post_130pm or is_post_close,
         "llm_model": "Session Closed",
         "llm_inference_time": 0,
-        "trading_window": "Trading Window: 9:45 AM – 1:30 PM IST",
+        "trading_window": window_reason,
         "consecutive_losses": 0,
     }
 
@@ -295,7 +304,7 @@ CRITICAL REQUIREMENT — MINIMUM 13% PROFIT POTENTIAL:
 • ONLY recommend BUY_CALL or BUY_PUT if the setup has clear high-conviction potential to generate a MINIMUM OF +13% PROFIT on the option premium before reaching resistance/support walls.
 • Target premium MUST be at least +13% above entry premium (target_premium >= entry_premium * 1.13).
 • If the room to resistance/support walls or market momentum cannot deliver at least 13% profit, you MUST return "WAIT".
-• Active trading window is 9:45 AM to 1:30 PM IST only. No signals after 1:30 PM IST.
+• Active trading window is 9:45 AM to 1:30 PM IST (extended to 3:40 PM if no morning signals). All open trades square off by 3:40 PM IST.
 
 Respond ONLY with this JSON (no markdown, no extra text):
 {{
@@ -310,7 +319,7 @@ Respond ONLY with this JSON (no markdown, no extra text):
   "reasoning": "WHY BUY CALL (or PUT / WAIT):\n• PCR: <exact PCR & interpretation>\n• OI Walls: <Support and Resistance walls>\n• Technicals: <RSI, MACD, Supertrend signals>\n• Profit Potential: <Minimum +13% potential verified>\n• Risk/Reward: <Target +13%, SL -8%, Capital Protection>",
   "key_risk": "<1 sentence about the main risk>",
   "market_bias": "BULLISH" or "BEARISH" or "NEUTRAL",
-  "trade_tip": "<1 practical tip for Groww F&O — target 13% profit or exit by 1:30 PM IST close>"
+  "trade_tip": "<1 practical tip for Groww F&O — target 13% profit or exit by 3:40 PM IST close>"
 }}"""
 
 
@@ -352,9 +361,9 @@ def get_signal(analysis: dict) -> dict:
     if not _is_market_open():
         return _market_closed_signal(analysis)
 
-    # ── Gate 0.5: Post 1:30 PM Hard Trading Cutoff ─────────
-    now_ist = _get_ist_now()
-    if (now_ist.hour * 60 + now_ist.minute) >= (13 * 60 + 30):
+    # ── Gate 0.5: Trading Window Check (Open till 3:40 PM if no signals yet) ──
+    window_ok, window_reason = _is_good_trading_window(symbol)
+    if not window_ok:
         return _rule_based_signal(analysis)
 
     # ── Stage 1: Fast Rule-Based Filter ───────────────────
@@ -790,27 +799,30 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     signal["holding_minutes"] = None
 
     if sig_name == "BUY_CALL":
-        signal["holding_time"] = f"Until +{tgt_pct}% Target (₹{target_prem}) or 1:30 PM"
+        signal["holding_time"] = f"Until +{tgt_pct}% Target (₹{target_prem}) or 3:40 PM"
         signal["action_summary"] = f"BUY {symbol} {strike} CE @ ₹{prem} (Target +13%: ₹{target_prem})"
         signal["exit_rule"] = (f"Target minimum +{tgt_pct}% profit (₹{target_prem}). "
                                f"Stop loss capped at ₹{sl_max} (₹{sl_prem}). "
-                               f"Trading window closes at 1:30 PM IST.")
+                               f"Auto square-off at 3:40 PM IST close.")
     elif sig_name == "BUY_PUT":
-        signal["holding_time"] = f"Until +{tgt_pct}% Target (₹{target_prem}) or 1:30 PM"
+        signal["holding_time"] = f"Until +{tgt_pct}% Target (₹{target_prem}) or 3:40 PM"
         signal["action_summary"] = f"BUY {symbol} {strike} PE @ ₹{prem} (Target +13%: ₹{target_prem})"
         signal["exit_rule"] = (f"Target minimum +{tgt_pct}% profit (₹{target_prem}). "
                                f"Stop loss capped at ₹{sl_max} (₹{sl_prem}). "
-                               f"Trading window closes at 1:30 PM IST.")
+                               f"Auto square-off at 3:40 PM IST close.")
     else:
         now_ist = _get_ist_now()
-        is_post_130pm = (now_ist.hour * 60 + now_ist.minute) >= (13 * 60 + 30)
+        mins_ist = now_ist.hour * 60 + now_ist.minute
+        window_ok, window_reason = _is_good_trading_window(symbol)
+        is_closed_for_today = not window_ok and (mins_ist >= 13 * 60 + 30 or mins_ist >= 15 * 60 + 40)
         signal["holding_minutes"] = 0
-        signal["holding_time"] = "Session Closed" if is_post_130pm else "Stay on Sidelines"
-        signal["action_summary"] = "Go do your work, please do not trade now" if is_post_130pm else "HOLD CASH — Wait for directional confirmation"
-        signal["exit_rule"] = "No trading after 1:30 PM IST" if is_post_130pm else "Do not enter position while market is consolidating"
+        signal["holding_time"] = "Session Closed" if is_closed_for_today else "Stay on Sidelines"
+        signal["action_summary"] = "Go do your work, please do not trade now" if is_closed_for_today else "HOLD CASH — Wait for directional confirmation"
+        signal["exit_rule"] = "Trading session closed" if is_closed_for_today else "Do not enter position while market is consolidating"
 
     now_ist = _get_ist_now()
-    signal["is_post_1pm"] = ((now_ist.hour * 60 + now_ist.minute) >= (13 * 60 + 30)) if sig_name not in ("BUY_CALL", "BUY_PUT") else False
+    window_ok, _ = _is_good_trading_window(symbol)
+    signal["is_post_1pm"] = not window_ok and (now_ist.hour * 60 + now_ist.minute) >= (13 * 60 + 30)
 
     # Ensure reasoning is NEVER None or empty in the database
     reasoning = signal.get("reasoning") or signal.get("rationale") or signal.get("reason") or signal.get("analysis")
@@ -832,21 +844,24 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
 
 
 # ─── Trading Window Filter ────────────────────────────────────
-def _is_good_trading_window() -> tuple:
+def _is_good_trading_window(symbol: str = "NIFTY") -> tuple:
     """
     Returns (is_allowed, reason_str) based on IST time-of-day.
     Trading schedule:
       - Active Trading Window: 9:45 AM – 1:30 PM IST (Allows opening 30-min volatility to settle)
-      - After 1:30 PM IST: All signals STOPPED for the day.
-        Message: 'Go do your work, please do not trade now'
-    First 30 mins (9:15–9:45) skipped — opening volatility & gap settling.
+      - Afternoon Extension: If no trade signals were given by 1:30 PM,
+        the trading window remains open until market close (3:40 PM IST) to capture late-day moves.
+      - Trade Complete Protection: If a trade was already taken earlier today,
+        new trading stops at 1:30 PM to preserve capital.
+      - 3:40 PM IST: All trading strictly ends for the day (market close).
     """
     now = _get_ist_now()
     h, m = now.hour, now.minute
     mins = h * 60 + m
 
-    market_open  = 9 * 60 + 45    # 9:45 AM IST (opening 30-min volatility filter)
-    trade_cutoff = 13 * 60 + 30   # 1:30 PM IST (Trading strictly ends for the day)
+    market_open  = 9 * 60 + 45     # 9:45 AM IST (opening 30-min volatility filter)
+    trade_cutoff = 13 * 60 + 30    # 1:30 PM IST (Standard cutoff)
+    market_close = 15 * 60 + 40    # 3:40 PM IST (Closing time / auto square-off)
 
     if mins < market_open:
         wait = market_open - mins
@@ -854,7 +869,18 @@ def _is_good_trading_window() -> tuple:
     if mins < trade_cutoff:
         remaining = trade_cutoff - mins
         return True, f"Trading window active (9:45 AM – 1:30 PM IST, {remaining} min remaining)"
-    return False, "Trading ended for today (After 1:30 PM IST) — Go do your work, please do not trade now"
+    if mins < market_close:
+        trades_today = 0
+        try:
+            trades_today = db.get_today_trade_count(symbol)
+        except Exception:
+            pass
+        if trades_today == 0:
+            remaining = market_close - mins
+            return True, f"Trading window extended to 3:40 PM close (no morning signal — {remaining} min remaining)"
+        else:
+            return False, "Trading ended for today (After 1:30 PM IST) — Daily trade completed, go do your work"
+    return False, "Trading closed for today (Market closed at 3:40 PM IST) — Signals resume tomorrow at 9:45 AM IST"
 
 
 # ─── Consecutive Loss Tracker (Resets daily each morning) ───
@@ -1000,7 +1026,7 @@ def _rule_based_signal(analysis: dict) -> dict:
             pass
 
     # ── Gate 1: Trading Window Filter ──────────────────────
-    window_ok, window_reason = _is_good_trading_window()
+    window_ok, window_reason = _is_good_trading_window(symbol)
 
     # ── Gate 2: Consecutive Loss Protection ────────────────
     consec_losses = _get_consecutive_losses(symbol)
@@ -1218,18 +1244,27 @@ def _rule_based_signal(analysis: dict) -> dict:
     now_ist = _get_ist_now()
     mins_ist = now_ist.hour * 60 + now_ist.minute
     is_post_130pm = mins_ist >= (13 * 60 + 30)
+    is_post_close = mins_ist >= (15 * 60 + 40)
+    is_closed_for_today = not window_ok and (is_post_130pm or is_post_close)
 
-    if is_post_130pm:
+    if is_closed_for_today:
         signal = "WAIT"
         otype = "NONE"
         confidence = 0
-        reasoning = (
-            "🛑 TRADING CLOSED FOR TODAY (After 1:30 PM IST):\n"
-            "• Go do your work, please do not trade now.\n"
-            "• Intraday trading window is 9:45 AM to 1:30 PM IST only.\n"
-            "• Preserving capital and eliminating afternoon theta decay.\n"
-            "• Signals will resume tomorrow morning at 9:45 AM IST."
-        )
+        if is_post_close:
+            reasoning = (
+                "🛑 MARKET CLOSED FOR TODAY (3:40 PM IST):\n"
+                "• All open trades squared off.\n"
+                "• Preserving capital and eliminating overnight risk.\n"
+                "• Signals will resume tomorrow morning at 9:45 AM IST."
+            )
+        else:
+            reasoning = (
+                "🛑 TRADING CLOSED FOR TODAY (After 1:30 PM IST):\n"
+                "• Go do your work, please do not trade now.\n"
+                "• Daily trade completed — preserving profits & capital.\n"
+                "• Signals will resume tomorrow morning at 9:45 AM IST."
+            )
 
     side = "call" if otype in ("CE", "NONE") else "put"
     bd = budget_advice.get(side, {})
@@ -1256,28 +1291,28 @@ def _rule_based_signal(analysis: dict) -> dict:
         "max_loss_inr": round(sl_max * bd.get("lots", 1), 2),
         "lot_size": lot_size,
         "reasoning": reasoning,
-        "key_risk": "Go do your work, please do not trade now" if is_post_130pm else "Market can reverse quickly — always use a stop loss. Never risk more than 50% of capital.",
+        "key_risk": "Trading session closed" if is_closed_for_today else "Market can reverse quickly — always use a stop loss. Never risk more than 50% of capital.",
         "market_bias": (
-            "NEUTRAL" if is_post_130pm else
+            "NEUTRAL" if is_closed_for_today else
             ("BULLISH" if bias_score >= ENTRY_THRESHOLD else
              "BEARISH" if bias_score <= -ENTRY_THRESHOLD else "NEUTRAL")
         ),
         "trade_tip": (
-            "Go do your work, please do not trade now." if is_post_130pm else
+            "Trading session closed." if is_closed_for_today else
             "Set a LIMIT order within the bid-ask spread on Groww F&O. Move SL to breakeven once trade is +10% in profit."
         ),
-        "holding_time": "Session Closed" if is_post_130pm else "Stay on Sidelines",
-        "action_summary": "Go do your work, please do not trade now" if is_post_130pm else "HOLD CASH — Wait for directional confirmation",
-        "exit_rule": "No trading after 1:30 PM IST" if is_post_130pm else "Do not enter position while market is consolidating",
+        "holding_time": "Session Closed" if is_closed_for_today else "Stay on Sidelines",
+        "action_summary": "Trading session closed" if is_closed_for_today else "HOLD CASH — Wait for directional confirmation",
+        "exit_rule": "Market session closed" if is_closed_for_today else "Do not enter position while market is consolidating",
         "symbol": symbol, "nearest_expiry": expiry,
         "atm_strike": atm, "ltp": ltp,
         "bias_score": bias_score,
         "data_source": analysis.get("data_source", "unknown"),
-        "source": "post_1pm_break" if is_post_130pm else "rule_based",
-        "is_post_1pm": is_post_130pm,
-        "llm_model": "Session Closed" if is_post_130pm else "Rule-Based (Enhanced v2)",
+        "source": "post_1pm_break" if is_closed_for_today else "rule_based",
+        "is_post_1pm": is_closed_for_today,
+        "llm_model": "Session Closed" if is_closed_for_today else "Rule-Based (Enhanced v2)",
         "llm_inference_time": 0,
-        "trading_window": "Trading window ended at 1:30 PM IST" if is_post_130pm else window_reason,
+        "trading_window": "Trading window ended" if is_closed_for_today else window_reason,
         "consecutive_losses": consec_losses,
     }
     return _enrich_signal(res, analysis)
