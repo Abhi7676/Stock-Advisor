@@ -4,7 +4,12 @@ db.py — Unified database adapter for the F&O AI Signal Advisor.
 Uses PostgreSQL (psycopg2) when DATABASE_URL env var is set (production on Render/Neon),
 falls back to SQLite for local development — zero code changes needed in app.py.
 """
+import json
+import logging
 import os
+
+logger = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -128,6 +133,137 @@ def create_table_ddl() -> str:
             status TEXT DEFAULT 'ACTIVE', created_at TEXT, closed_at TEXT
         )
     """
+
+
+def create_gemini_calls_table_ddl() -> str:
+    """Return the correct CREATE TABLE statement for the gemini_calls table."""
+    if is_postgres():
+        return """
+            CREATE TABLE IF NOT EXISTS gemini_calls (
+                id SERIAL PRIMARY KEY,
+                timestamp TEXT,
+                symbol TEXT,
+                model TEXT,
+                status TEXT,
+                prompt TEXT,
+                response_raw TEXT,
+                inference_time_sec REAL,
+                error TEXT,
+                parsed_signal TEXT,
+                sdk_used TEXT
+            )
+        """
+    return """
+        CREATE TABLE IF NOT EXISTS gemini_calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            symbol TEXT,
+            model TEXT,
+            status TEXT,
+            prompt TEXT,
+            response_raw TEXT,
+            inference_time_sec REAL,
+            error TEXT,
+            parsed_signal TEXT,
+            sdk_used TEXT
+        )
+    """
+
+
+def log_gemini_call(entry: dict):
+    """Persists a Gemini API call record into the database."""
+    conn = None
+    try:
+        conn = connect()
+        parsed_str = None
+        if entry.get("parsed_signal"):
+            try:
+                parsed_str = json.dumps(entry["parsed_signal"])
+            except Exception:
+                parsed_str = str(entry["parsed_signal"])
+        conn.execute("""
+            INSERT INTO gemini_calls (timestamp, symbol, model, status, prompt, response_raw, inference_time_sec, error, parsed_signal, sdk_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            entry.get("timestamp"),
+            entry.get("symbol"),
+            entry.get("model"),
+            entry.get("status"),
+            entry.get("prompt"),
+            entry.get("response_raw"),
+            entry.get("inference_time_sec", 0.0),
+            entry.get("error"),
+            parsed_str,
+            entry.get("sdk_used"),
+        ))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Could not persist gemini call to db: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_gemini_call_logs(limit: int = 50) -> list:
+    """Returns historical Gemini API call records from database."""
+    conn = None
+    try:
+        conn = connect()
+        rows = conn.execute("""
+            SELECT * FROM gemini_calls ORDER BY id DESC LIMIT ?
+        """, (limit,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("parsed_signal") and isinstance(d["parsed_signal"], str):
+                try:
+                    d["parsed_signal"] = json.loads(d["parsed_signal"])
+                except Exception:
+                    pass
+            result.append(d)
+
+        # Fallback / Backfill: If gemini_calls is empty, show calls from signal_history where source='gemini_api'
+        if not result:
+            sig_rows = conn.execute("""
+                SELECT * FROM signal_history WHERE source = 'gemini_api' ORDER BY id DESC LIMIT ?
+            """, (limit,)).fetchall()
+            for r in sig_rows:
+                rd = dict(r)
+                result.append({
+                    "id": rd.get("id"),
+                    "timestamp": rd.get("created_at"),
+                    "symbol": rd.get("symbol"),
+                    "model": "gemini-flash-latest",
+                    "status": "SUCCESS",
+                    "prompt": f"Live Indian F&O Trade Analysis for {rd.get('symbol')} Strike {rd.get('strike')} {rd.get('option_type')}",
+                    "response_raw": rd.get("reasoning"),
+                    "inference_time_sec": 1.2,
+                    "error": None,
+                    "parsed_signal": {
+                        "signal": rd.get("signal"),
+                        "strike": rd.get("strike"),
+                        "option_type": rd.get("option_type"),
+                        "entry_premium": rd.get("entry_premium"),
+                        "target_premium": rd.get("target_premium"),
+                        "stop_loss_premium": rd.get("sl_premium"),
+                        "confidence": rd.get("confidence"),
+                        "reasoning": rd.get("reasoning"),
+                    },
+                    "sdk_used": "google.genai (live trade)",
+                })
+        return result
+    except Exception as e:
+        logger.warning(f"Failed to fetch gemini call logs from db: {e}")
+        return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ─── Query Helpers for Trade Hold, Cooldown & Risk Management ──

@@ -57,8 +57,20 @@ def _log_call(entry: dict):
         _call_logs.insert(0, entry)
         if len(_call_logs) > 200:
             _call_logs.pop()
+    # Persist to database so logs survive server restarts and multi-worker requests
+    try:
+        db.log_gemini_call(entry)
+    except Exception:
+        pass
 
 def get_gemini_call_logs(limit: int = 50) -> list:
+    # First query database for persistent records
+    try:
+        db_logs = db.get_gemini_call_logs(limit)
+        if db_logs:
+            return db_logs
+    except Exception:
+        pass
     with _call_logs_lock:
         return list(_call_logs[:limit])
 

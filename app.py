@@ -168,6 +168,7 @@ def _init_db():
     # Step 1: Create table and commit immediately — so subsequent rollbacks
     # (from failed ALTER TABLE on existing columns) don't undo the creation.
     conn.execute(db.create_table_ddl())
+    conn.execute(db.create_gemini_calls_table_ddl())
     conn.commit()
 
     # Step 2: Schema migration — add new columns if they don't exist yet.
