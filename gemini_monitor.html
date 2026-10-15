@@ -511,7 +511,7 @@
       <div class="stat-card">
         <div class="stat-icon">📊</div>
         <div class="stat-info">
-          <div class="stat-lbl">Total Calls Recorded</div>
+          <div class="stat-lbl">Today's Calls Recorded</div>
           <div class="stat-num" id="statTotalCalls">0</div>
         </div>
       </div>
@@ -564,7 +564,8 @@
     <!-- ── Call Log Feed ─────────────────────────────────────── -->
     <div class="feed-header">
       <div style="font-size:1.05rem;font-weight:700;display:flex;align-items:center;gap:8px;">
-        <span>📋</span> API Call History (<span id="logCountLabel">0</span>)
+        <span>📋</span> Today's API Call History (<span id="logCountLabel">0</span>)
+        <span style="font-size:.7rem;font-weight:600;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);padding:2px 8px;border-radius:12px;">Daily Auto-Reset</span>
       </div>
       <div class="feed-filters">
         <input type="text" id="filterSearch" class="filter-search" placeholder="🔍 Search prompt, response, strike..." />
@@ -573,6 +574,7 @@
         <button class="filter-btn" data-filter="ERROR" onclick="setFilter('ERROR')">Errors</button>
         <button class="filter-btn" data-filter="NIFTY" onclick="setFilter('NIFTY')">Nifty</button>
         <button class="filter-btn" data-filter="BANKNIFTY" onclick="setFilter('BANKNIFTY')">BankNifty</button>
+        <button class="filter-btn" onclick="clearAllLogs()" style="color:#f87171;border-color:rgba(248,113,113,0.35);margin-left:auto;" title="Clear call history immediately to free memory">🗑️ Clear History</button>
       </div>
     </div>
 
@@ -833,6 +835,23 @@ Question: Explain the importance of Delta and Theta decay when buying 1 lot of w
         clearInterval(autoRefreshTimer);
       }
     });
+
+    async function clearAllLogs() {
+      if (!confirm('Are you sure you want to clear API call history? This frees up server memory and storage immediately.')) return;
+      try {
+        const res = await fetch('/api/gemini-calls/clear', { method: 'POST' });
+        const json = await res.json();
+        if (json.status === 'ok') {
+          allLogs = [];
+          updateStats([]);
+          renderLogs();
+        } else {
+          alert('Could not clear logs: ' + (json.message || 'unknown error'));
+        }
+      } catch (e) {
+        alert('Could not clear logs: ' + e);
+      }
+    }
 
     function startAutoRefresh() {
       clearInterval(autoRefreshTimer);

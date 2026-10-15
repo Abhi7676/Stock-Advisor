@@ -52,10 +52,20 @@ def _next_log_id() -> int:
         _call_counter += 1
         return _call_counter
 
+def clear_in_memory_logs():
+    """Wipes in-memory API call logs and resets counter."""
+    global _call_logs, _call_counter
+    with _call_logs_lock:
+        _call_logs.clear()
+        _call_counter = 0
+
 def _log_call(entry: dict):
     with _call_logs_lock:
+        today_prefix = _get_ist_now().strftime("%Y-%m-%d")
+        # Prune older days from memory to avoid heap / RAM leaks
+        _call_logs[:] = [l for l in _call_logs if str(l.get("timestamp", "")).startswith(today_prefix)]
         _call_logs.insert(0, entry)
-        if len(_call_logs) > 200:
+        if len(_call_logs) > 100:
             _call_logs.pop()
     # Persist to database so logs survive server restarts and multi-worker requests
     try:
@@ -63,15 +73,19 @@ def _log_call(entry: dict):
     except Exception:
         pass
 
-def get_gemini_call_logs(limit: int = 50) -> list:
+def get_gemini_call_logs(limit: int = 50, today_only: bool = True) -> list:
     # First query database for persistent records
     try:
-        db_logs = db.get_gemini_call_logs(limit)
+        db_logs = db.get_gemini_call_logs(limit, today_only=today_only)
         if db_logs:
             return db_logs
     except Exception:
         pass
     with _call_logs_lock:
+        today_prefix = _get_ist_now().strftime("%Y-%m-%d")
+        if today_only:
+            today_logs = [l for l in _call_logs if str(l.get("timestamp", "")).startswith(today_prefix)]
+            return list(today_logs[:limit])
         return list(_call_logs[:limit])
 
 

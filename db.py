@@ -170,11 +170,69 @@ def create_gemini_calls_table_ddl() -> str:
     """
 
 
-def log_gemini_call(entry: dict):
-    """Persists a Gemini API call record into the database."""
+def _get_today_ist_str() -> str:
+    """Returns today's date in IST format: 'YYYY-MM-DD'."""
+    from datetime import datetime, timezone, timedelta
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    except Exception:
+        now = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+    return now.strftime("%Y-%m-%d")
+
+
+def clean_old_gemini_calls(keep_date_str: str = None) -> int:
+    """
+    Cleans up all gemini_calls from previous days to eliminate storage bloat,
+    minimize memory/load on the application, and ensure clean daily history.
+    Keeps only calls matching `keep_date_str` (defaults to today's date in IST YYYY-MM-DD).
+    """
+    if not keep_date_str:
+        keep_date_str = _get_today_ist_str()
     conn = None
     try:
         conn = connect()
+        pattern = f"{keep_date_str}%"
+        conn.execute("DELETE FROM gemini_calls WHERE timestamp IS NULL OR timestamp NOT LIKE ?", (pattern,))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Failed to clean old gemini calls: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def clear_all_gemini_calls() -> int:
+    """Clears all records from gemini_calls table to instantly free up resources."""
+    conn = None
+    try:
+        conn = connect()
+        conn.execute("DELETE FROM gemini_calls")
+        conn.commit()
+        return 1
+    except Exception as e:
+        logger.warning(f"Failed to clear all gemini calls: {e}")
+        return 0
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def log_gemini_call(entry: dict):
+    """Persists a Gemini API call record into the database and auto-prunes previous days."""
+    conn = None
+    try:
+        conn = connect()
+        # Auto-clean previous days' calls to keep DB fast and light
+        today_pattern = f"{_get_today_ist_str()}%"
+        conn.execute("DELETE FROM gemini_calls WHERE timestamp IS NULL OR timestamp NOT LIKE ?", (today_pattern,))
+
         parsed_str = None
         if entry.get("parsed_signal"):
             try:
@@ -207,14 +265,24 @@ def log_gemini_call(entry: dict):
                 pass
 
 
-def get_gemini_call_logs(limit: int = 50) -> list:
-    """Returns historical Gemini API call records from database."""
+def get_gemini_call_logs(limit: int = 50, today_only: bool = True) -> list:
+    """Returns today's Gemini API call records from database, auto-clearing older days."""
     conn = None
     try:
+        today_str = _get_today_ist_str()
+        if today_only:
+            clean_old_gemini_calls(today_str)
+
         conn = connect()
-        rows = conn.execute("""
-            SELECT * FROM gemini_calls ORDER BY id DESC LIMIT ?
-        """, (limit,)).fetchall()
+        if today_only:
+            rows = conn.execute("""
+                SELECT * FROM gemini_calls WHERE timestamp LIKE ? ORDER BY id DESC LIMIT ?
+            """, (f"{today_str}%", limit)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT * FROM gemini_calls ORDER BY id DESC LIMIT ?
+            """, (limit,)).fetchall()
+
         result = []
         for r in rows:
             d = dict(r)
@@ -225,11 +293,11 @@ def get_gemini_call_logs(limit: int = 50) -> list:
                     pass
             result.append(d)
 
-        # Fallback / Backfill: If gemini_calls is empty, show calls from signal_history where source='gemini_api'
-        if not result:
+        # Fallback / Backfill: If gemini_calls is empty, show today's calls from signal_history where source='gemini_api'
+        if not result and today_only:
             sig_rows = conn.execute("""
-                SELECT * FROM signal_history WHERE source = 'gemini_api' ORDER BY id DESC LIMIT ?
-            """, (limit,)).fetchall()
+                SELECT * FROM signal_history WHERE source = 'gemini_api' AND created_at LIKE ? ORDER BY id DESC LIMIT ?
+            """, (f"{today_str}%", limit)).fetchall()
             for r in sig_rows:
                 rd = dict(r)
                 result.append({

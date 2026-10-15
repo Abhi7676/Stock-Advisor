@@ -91,6 +91,7 @@ from gemini_advisor import (
     get_gemini_model_name,
     get_last_error,
     get_gemini_call_logs,
+    clear_in_memory_logs,
     test_gemini_call,
 )
 from notifier import send_signal_alert, test_telegram_connection
@@ -214,9 +215,11 @@ def _init_db():
                 WHERE id = ?
             """, (-sl_cap, fixed_exit, fixed_pct, f"🛑 STOP LOSS EXIT (₹{int(sl_cap)} loss, {fixed_pct}%)", rid))
         conn.commit()
+    # Step 5: Clean up old gemini API call records from previous days
+    try:
+        db.clean_old_gemini_calls()
     except Exception as e:
-        logger.warning(f"Error repairing glitched SL rows: {e}")
-        conn.rollback()
+        logger.warning(f"Error cleaning old gemini calls on startup: {e}")
 
     conn.close()
 
@@ -738,9 +741,10 @@ def api_gemini_status():
 
 @app.route("/api/gemini-calls", methods=["GET"])
 def api_gemini_calls():
-    """Returns recent Gemini API calls including exact prompts and responses."""
+    """Returns today's Gemini API calls including exact prompts and responses."""
     limit = int(request.args.get("limit", 50))
-    logs = get_gemini_call_logs(limit)
+    today_only = request.args.get("today_only", "true").lower() in ("true", "1", "yes")
+    logs = get_gemini_call_logs(limit, today_only=today_only)
     return jsonify({
         "status": "ok",
         "count": len(logs),
@@ -748,6 +752,17 @@ def api_gemini_calls():
         "active_model": get_gemini_model_name(),
         "is_available": is_gemini_available(),
     })
+
+
+@app.route("/api/gemini-calls/clear", methods=["POST", "DELETE"])
+def api_gemini_calls_clear():
+    """Clears all Gemini API call history from database and memory."""
+    try:
+        deleted = db.clear_all_gemini_calls()
+        clear_in_memory_logs()
+        return jsonify({"status": "ok", "message": "API call history cleared", "deleted_count": deleted})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route("/api/gemini-pause", methods=["POST", "GET"])
 def api_gemini_pause():
