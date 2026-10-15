@@ -439,6 +439,13 @@ def route_gemini_monitor():
     return send_from_directory(".", "gemini_monitor.html")
 
 
+@app.route("/performance-history", methods=["GET"])
+@app.route("/performance_analytics.html", methods=["GET"])
+def route_performance_analytics():
+    """Serves the PowerBI-style Performance & Signal Accuracy Dashboard."""
+    return send_from_directory(".", "performance_analytics.html")
+
+
 @app.route("/api/signal/<symbol>", methods=["GET"])
 def api_signal(symbol: str):
     """Returns AI-generated CALL/PUT signal for NIFTY or BANKNIFTY without blocking worker."""

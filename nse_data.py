@@ -444,7 +444,7 @@ def _synthetic_chain(symbol: str) -> dict:
 
     atm = int(round(spot / step) * step)
     expiry_str, days_to_exp = _get_expiry_info(symbol)
-    T = (4.25 / 365.0) if symbol == "NIFTY" else (26.0 / 365.0)
+    T = max(0.5, float(days_to_exp)) / 365.0
     r = 0.07  # India risk-free rate (~7%)
 
     base_call_iv = 0.1215 if symbol == "NIFTY" else 0.115
@@ -546,24 +546,30 @@ def _adjust_for_holidays(exp_date: date) -> date:
 def _get_expiry_info(symbol: str) -> tuple:
     """
     Calculates active contract expiry date dynamically with NSE holiday adjustments:
-      - NIFTY: Weekly options expiring every Thursday (or preceding day if holiday)
+      - NIFTY: Weekly options expiring every Tuesday (or preceding trading day if holiday)
       - BANKNIFTY: Monthly options expiring on the last Tuesday of each month
-                   (shifts to Monday if Tuesday is an NSE holiday, e.g. 23-Nov-2026 for Guru Nanak Jayanti!)
-    Automatically rolls over to the next month/cycle as soon as expiry passes.
+                   (shifts to Monday if Tuesday is an NSE holiday, e.g. 23-Nov-2026 for Guru Nanak Jayanti)
+    Automatically rolls over to the next cycle as soon as expiry passes.
     """
     import calendar
-    from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    try:
+        from zoneinfo import ZoneInfo
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    except Exception:
+        now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+    today = now_ist.date()
+    is_post_close = (now_ist.hour * 60 + now_ist.minute) >= (15 * 60 + 30)
 
     if symbol.upper() == "NIFTY":
-        # Weekly Thursday expiry (Thursday = weekday 3)
-        target_weekday = 3
+        # Weekly Tuesday expiry (Tuesday = weekday 1)
+        target_weekday = 1
         days_ahead = (target_weekday - today.weekday()) % 7
-        if days_ahead == 0:
+        if days_ahead == 0 and is_post_close:
             days_ahead = 7
         expiry_date = today + timedelta(days=days_ahead)
         adj_expiry = _adjust_for_holidays(expiry_date)
-        return adj_expiry.strftime("%d-%b-%Y"), max(1, (adj_expiry - today).days)
+        days_left = max(1, (adj_expiry - today).days) if (days_ahead > 0 or is_post_close) else 1
+        return adj_expiry.strftime("%d-%b-%Y"), days_left
 
     # BANKNIFTY: Monthly contract (last Tuesday of active month; Tuesday = weekday 1)
     def _last_tuesday(y: int, m: int) -> date:
@@ -574,7 +580,7 @@ def _get_expiry_info(symbol: str) -> tuple:
 
     exp_date = _last_tuesday(today.year, today.month)
     adj_exp_date = _adjust_for_holidays(exp_date)
-    if today > adj_exp_date:
+    if today > adj_exp_date or (today == adj_exp_date and is_post_close):
         # Current month's expiry date has passed; auto roll over to next month
         next_m = today.month + 1 if today.month < 12 else 1
         next_y = today.year if today.month < 12 else today.year + 1

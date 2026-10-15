@@ -218,7 +218,9 @@ async function fetchAllData(force = false) {
 
   fetchSignalHistory();
   fetchPerformance();
-  fetchIndexAnalytics();
+  if (document.getElementById("analyticsKpis")) {
+    fetchIndexAnalytics();
+  }
 
   // If data still not loaded (cold start), schedule a quick retry
   if (!_dataLoaded.NIFTY || !_dataLoaded.BANKNIFTY) {

@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PowerBI Signal Accuracy &amp; Performance Analytics — Nifty &amp; BankNifty</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📊</text></svg>" />
+
+  <!-- Fonts & Core Styles -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Chart.js for PowerBI-Style Visuals -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    /* ── PowerBI Dashboard Specific Enhancements ── */
+    body {
+      padding-bottom: 60px;
+    }
+    .pbi-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px 24px;
+    }
+    .pbi-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+    .pbi-title-box h1 {
+      font-size: 1.55rem;
+      font-weight: 800;
+      color: var(--text-1);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 4px 0;
+      letter-spacing: -0.3px;
+    }
+    .pbi-title-box p {
+      font-size: 0.8rem;
+      color: var(--text-3);
+      margin: 0;
+    }
+
+    /* Top Control Bar (Tabs + Slicers) */
+    .control-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .tab-slicer-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    /* PowerBI KPI Cards */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.25s ease;
+    }
+    .kpi-card:hover {
+      border-color: var(--border-hi);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+    }
+    .kpi-card::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--accent);
+      opacity: 0.6;
+    }
+    .kpi-card.kpi-call::after { background: var(--call); opacity: 0.9; }
+    .kpi-card.kpi-put::after  { background: var(--put); opacity: 0.9; }
+    .kpi-card.kpi-cyan::after { background: var(--cyan); opacity: 0.9; }
+
+    .kpi-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-3);
+    }
+    .kpi-val {
+      font-family: var(--mono);
+      font-size: 1.35rem;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+    .kpi-sub {
+      font-size: 0.72rem;
+      color: var(--text-3);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Charts Row */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 1024px) {
+      .charts-grid { grid-template-columns: 1fr; }
+    }
+    .chart-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+      position: relative;
+    }
+    .chart-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .chart-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text-1);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .chart-subtitle {
+      font-size: 0.72rem;
+      color: var(--text-3);
+    }
+    .chart-box {
+      position: relative;
+      height: 280px;
+      width: 100%;
+    }
+
+    /* Detailed Trades Table */
+    .trades-panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    }
+    .table-responsive {
+      overflow-x: auto;
+      margin-top: 12px;
+    }
+    .pbi-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .pbi-table th {
+      background: rgba(255,255,255,0.03);
+      color: var(--text-3);
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 0.68rem;
+      letter-spacing: 0.5px;
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .pbi-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      color: var(--text-2);
+    }
+    .pbi-table tr:hover td {
+      background: rgba(255,255,255,0.02);
+    }
+
+    .badge-accurate {
+      background: rgba(0, 230, 118, 0.15);
+      color: var(--call);
+      border: 1px solid rgba(0, 230, 118, 0.35);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.72rem;
+      display: inline-block;
+      white-space: nowrap;
+    }
+    .badge-wrong {
+      background: rgba(255, 82, 82, 0.15);
+      color: var(--put);
+      border: 1px solid rgba(255, 82, 82, 0.35);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.72rem;
+      display: inline-block;
+      white-space: nowrap;
+    }
+    .badge-active {
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--cyan);
+      border: 1px solid rgba(6, 182, 212, 0.35);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.72rem;
+      display: inline-block;
+      white-space: nowrap;
+    }
+
+    .search-input {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xs);
+      color: var(--text-1);
+      padding: 6px 14px;
+      font-size: 0.78rem;
+      outline: none;
+      min-width: 220px;
+    }
+    .search-input:focus {
+      border-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="pbi-container">
+
+    <!-- ── Top Header Navigation ─────────────────────────────── -->
+    <header class="pbi-header">
+      <div class="pbi-title-box">
+        <h1><span>📊</span> Signal Accuracy &amp; Performance Analytics</h1>
+        <p>Interactive PowerBI Visual Trading Intelligence • Realized Equity Curve, Win/Loss Ratio &amp; Trade History</p>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <a href="/" class="btn btn-sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;padding:7px 14px;">
+          <span>←</span> Back to Live Signals
+        </a>
+        <button id="themeToggleBtn" onclick="toggleTheme()" class="btn btn-sm" style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;padding:7px 14px;">
+          <span id="themeIcon">🌙</span> <span id="themeLabel">Light</span>
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="fetchIndexAnalytics(true)" style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;padding:7px 14px;">
+          <span>🔄</span> Refresh
+        </button>
+      </div>
+    </header>
+
+    <!-- ── Control Bar: Symbol Tabs & Period Slicers ─────────── -->
+    <div class="control-card">
+      <div class="tab-slicer-left">
+        <!-- Index Tabs -->
+        <div class="index-analytics-tabs">
+          <button class="index-tab-btn active" id="tabBtnNifty" onclick="switchAnalyticsTab('NIFTY')">
+            <span>📈</span> NIFTY 50
+          </button>
+          <button class="index-tab-btn" id="tabBtnBankNifty" onclick="switchAnalyticsTab('BANKNIFTY')">
+            <span>🏦</span> BANK NIFTY
+          </button>
+        </div>
+
+        <!-- Period Slicers -->
+        <div class="slicer-group">
+          <span style="font-size:0.7rem;color:var(--text-3);font-weight:700;text-transform:uppercase;">Time Slicer:</span>
+          <button class="slicer-btn active" data-days="5" onclick="setAnalyticsSlicer(5)">1 Week (5D)</button>
+          <button class="slicer-btn" data-days="15" onclick="setAnalyticsSlicer(15)">15 Days</button>
+          <button class="slicer-btn" data-days="30" onclick="setAnalyticsSlicer(30)">30 Days</button>
+          <button class="slicer-btn" data-days="45" onclick="setAnalyticsSlicer(45)">45 Days</button>
+          <button class="slicer-btn" data-days="90" onclick="setAnalyticsSlicer(90)">3 Months</button>
+        </div>
+      </div>
+
+      <!-- Current Slice Summary Tag -->
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="sliceSummaryTag" style="font-size:0.75rem;font-weight:700;color:var(--accent);background:rgba(99,102,241,0.12);padding:4px 12px;border-radius:12px;border:1px solid rgba(99,102,241,0.3);">
+          NIFTY 50 • Last 1 Week (5 Days)
+        </span>
+        <span id="sliceRangeTag" style="font-size:0.72rem;color:var(--text-3);">
+          Loading...
+        </span>
+      </div>
+    </div>
+
+    <!-- ── PowerBI KPI Cards Grid ────────────────────────────── -->
+    <div class="kpi-grid" id="kpiGrid">
+      <div class="kpi-card kpi-call">
+        <div class="kpi-label">Accuracy Rate (Win Rate)</div>
+        <div class="kpi-val" id="kpiWinRate" style="color:var(--call)">—</div>
+        <div class="kpi-sub" id="kpiWinLossCount">— Accurate • — Wrong</div>
+      </div>
+
+      <div class="kpi-card kpi-call">
+        <div class="kpi-label">Accurate Signals (Won)</div>
+        <div class="kpi-val" id="kpiWonCount" style="color:var(--call)">—</div>
+        <div class="kpi-sub">Target Hit (+13% profit)</div>
+      </div>
+
+      <div class="kpi-card kpi-put">
+        <div class="kpi-label">Wrong Signals (Lost)</div>
+        <div class="kpi-val" id="kpiLostCount" style="color:var(--put)">—</div>
+        <div class="kpi-sub">Stop Loss Triggered</div>
+      </div>
+
+      <div class="kpi-card kpi-call">
+        <div class="kpi-label">Gross Profit Won</div>
+        <div class="kpi-val" id="kpiWonAmt" style="color:var(--call)">—</div>
+        <div class="kpi-sub">Sum of all winning trades</div>
+      </div>
+
+      <div class="kpi-card kpi-put">
+        <div class="kpi-label">Gross Loss Incurred</div>
+        <div class="kpi-val" id="kpiLostAmt" style="color:var(--put)">—</div>
+        <div class="kpi-sub">Strictly SL capped loss</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Net Realized P&amp;L</div>
+        <div class="kpi-val" id="kpiNetPnl">—</div>
+        <div class="kpi-sub" id="kpiClosedCount">— Closed Signals</div>
+      </div>
+
+      <div class="kpi-card kpi-cyan">
+        <div class="kpi-label">Profit Factor</div>
+        <div class="kpi-val" id="kpiProfitFactor" style="color:var(--cyan)">—</div>
+        <div class="kpi-sub">Gross Profit / Gross Loss</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Total Generated</div>
+        <div class="kpi-val" id="kpiTotalSignals" style="color:var(--text-1)">—</div>
+        <div class="kpi-sub" id="kpiActiveCount">— Active</div>
+      </div>
+    </div>
+
+    <!-- ── PowerBI Visual Charts Section ─────────────────────── -->
+    <div class="charts-grid">
+      <!-- Chart 1: Cumulative Realized P&L Growth Curve -->
+      <div class="chart-panel">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title"><span>📈</span> Cumulative Realized P&amp;L Curve (Equity Growth)</div>
+            <div class="chart-subtitle">Progression of net trading gains across chronological signals</div>
+          </div>
+          <span id="chartPnlBadge" style="font-family:var(--mono);font-size:0.85rem;font-weight:800;color:var(--call);">
+            +₹0.00
+          </span>
+        </div>
+        <div class="chart-box">
+          <canvas id="pnlCurveChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Chart 2: Win vs Loss Accuracy Distribution -->
+      <div class="chart-panel">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title"><span>🎯</span> Signal Accuracy Distribution</div>
+            <div class="chart-subtitle">Target Hit vs Stop Loss ratio</div>
+          </div>
+        </div>
+        <div class="chart-box">
+          <canvas id="winLossDonutChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chart 3: Trade-by-Trade Returns Bar Chart -->
+    <div class="chart-panel" style="margin-bottom:24px;">
+      <div class="chart-head">
+        <div>
+          <div class="chart-title"><span>📊</span> Individual Trade-by-Trade Returns (Realized P&amp;L ₹)</div>
+          <div class="chart-subtitle">Distribution of profit bookings (+13%) and stop-loss exits</div>
+        </div>
+      </div>
+      <div class="chart-box" style="height:220px;">
+        <canvas id="tradeBarChart"></canvas>
+      </div>
+    </div>
+
+    <!-- ── Detailed Signal History Log Table ──────────────────── -->
+    <div class="trades-panel">
+      <div class="chart-head" style="margin-bottom:12px;">
+        <div>
+          <div class="chart-title"><span>📜</span> Trade-by-Trade Execution Log (<span id="tableCountLabel">0</span>)</div>
+          <div class="chart-subtitle">Full audit trail of entry, exit, strike, and realized outcome</div>
+        </div>
+        <div>
+          <input type="text" id="tradeSearchInput" class="search-input" placeholder="🔍 Filter strike, CE/PE, status..." oninput="filterTradesTable()" />
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="pbi-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date &amp; Time (IST)</th>
+              <th>Signal &amp; Direction</th>
+              <th>Strike &amp; Contract</th>
+              <th>Entry Premium</th>
+              <th>Exit Premium</th>
+              <th>P&amp;L %</th>
+              <th>Realized P&amp;L (₹)</th>
+              <th>Outcome / Accuracy</th>
+              <th>Execution Status &amp; Reason</th>
+            </tr>
+          </thead>
+          <tbody id="tradesTableBody">
+            <tr>
+              <td colspan="10" style="text-align:center;padding:24px;color:var(--text-3);">
+                Loading signal history data...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Dashboard Logic & Chart.js Rendering ────────────────── -->
+  <script>
+    let currentTab = "NIFTY";
+    let currentDays = 5;
+    let rawTrades = [];
+
+    let pnlCurveChart = null;
+    let winLossDonutChart = null;
+    let tradeBarChart = null;
+
+    function switchAnalyticsTab(sym) {
+      currentTab = sym;
+      document.getElementById("tabBtnNifty")?.classList.toggle("active", sym === "NIFTY");
+      document.getElementById("tabBtnBankNifty")?.classList.toggle("active", sym === "BANKNIFTY");
+      fetchIndexAnalytics();
+    }
+
+    function setAnalyticsSlicer(days) {
+      currentDays = days;
+      document.querySelectorAll(".slicer-btn").forEach(btn => {
+        btn.classList.toggle("active", parseInt(btn.getAttribute("data-days")) === days);
+      });
+      fetchIndexAnalytics();
+    }
+
+    async function fetchIndexAnalytics() {
+      try {
+        const r = await fetch(`/api/index-analytics?symbol=${currentTab}&days=${currentDays}`);
+        if (!r.ok) return;
+        const json = await r.json();
+        if (json.status === "ok" && json.data) {
+          renderDashboard(json.data);
+        }
+      } catch (e) {
+        console.warn("Analytics fetch error:", e);
+      }
+    }
+
+    function renderDashboard(d) {
+      const symLabel = d.symbol === "NIFTY" ? "NIFTY 50" : "BANK NIFTY";
+      const periodNames = {
+        5: "Last 1 Week (5 Days)",
+        15: "Last 15 Days",
+        30: "Last 30 Days",
+        45: "Last 45 Days",
+        90: "Last 3 Months"
+      };
+      const pText = periodNames[d.days] || `Last ${d.days} Days`;
+
+      // Update Top Tags
+      document.getElementById("sliceSummaryTag").textContent = `${symLabel} • ${pText}`;
+      document.getElementById("sliceRangeTag").textContent = `Cutoff: ${d.cutoff_date || '—'} to Today`;
+      document.getElementById("tableCountLabel").textContent = d.total_signals;
+
+      const pnlColor = d.net_pnl_inr > 0 ? "var(--call)" : d.net_pnl_inr < 0 ? "var(--put)" : "var(--text-2)";
+      const winRateColor = d.accuracy_rate >= 50 ? "var(--call)" : d.accuracy_rate >= 40 ? "var(--wait)" : "var(--put)";
+
+      // Update KPI Cards
+      document.getElementById("kpiWinRate").textContent = `${d.accuracy_rate}%`;
+      document.getElementById("kpiWinRate").style.color = winRateColor;
+      document.getElementById("kpiWinLossCount").textContent = `${d.accurate_signals} Accurate • ${d.wrong_signals} Wrong`;
+
+      document.getElementById("kpiWonCount").textContent = `🎯 ${d.accurate_signals}`;
+      document.getElementById("kpiLostCount").textContent = `❌ ${d.wrong_signals}`;
+
+      document.getElementById("kpiWonAmt").textContent = `+₹${fmt(d.won_amount_inr)}`;
+      document.getElementById("kpiLostAmt").textContent = `-₹${fmt(d.lost_amount_inr)}`;
+
+      const netEl = document.getElementById("kpiNetPnl");
+      netEl.textContent = `${d.net_pnl_inr >= 0 ? "+" : ""}₹${fmt(d.net_pnl_inr)}`;
+      netEl.style.color = pnlColor;
+      document.getElementById("kpiClosedCount").textContent = `${d.closed_signals} Closed Signals`;
+
+      document.getElementById("kpiProfitFactor").textContent = `${d.profit_factor}x`;
+      document.getElementById("kpiTotalSignals").textContent = d.total_signals;
+      document.getElementById("kpiActiveCount").textContent = d.active_signals > 0 ? `⏳ ${d.active_signals} Active Position` : "All Closed";
+
+      document.getElementById("chartPnlBadge").textContent = `${d.net_pnl_inr >= 0 ? "+" : ""}₹${fmt(d.net_pnl_inr)}`;
+      document.getElementById("chartPnlBadge").style.color = pnlColor;
+
+      // Save trades and update visuals
+      rawTrades = d.trades || [];
+      renderCharts(rawTrades, d);
+      renderTradesTable(rawTrades);
+    }
+
+    function renderCharts(trades, d) {
+      // Sort oldest to newest for chronological equity curve
+      const chronological = [...trades].reverse();
+
+      // 1. Cumulative Equity Curve Data
+      let runningPnl = 0;
+      const curveLabels = [];
+      const curveData = [];
+
+      chronological.forEach((t, i) => {
+        runningPnl += (t.pnl_amount || 0);
+        const dt = (t.created_at || '').replace('T', ' ').slice(5, 16);
+        curveLabels.push(dt || `#${i+1}`);
+        curveData.push(runningPnl);
+      });
+
+      // Render Cumulative Curve Chart
+      const pnlCtx = document.getElementById("pnlCurveChart").getContext("2d");
+      if (pnlCurveChart) pnlCurveChart.destroy();
+
+      const gradient = pnlCtx.createLinearGradient(0, 0, 0, 260);
+      gradient.addColorStop(0, "rgba(0, 230, 118, 0.35)");
+      gradient.addColorStop(1, "rgba(0, 230, 118, 0.0)");
+
+      pnlCurveChart = new Chart(pnlCtx, {
+        type: "line",
+        data: {
+          labels: curveLabels.length ? curveLabels : ["Start", "Current"],
+          datasets: [{
+            label: "Cumulative Realized P&L (₹)",
+            data: curveData.length ? curveData : [0, 0],
+            borderColor: "#00e676",
+            borderWidth: 2.5,
+            pointBackgroundColor: "#00e676",
+            pointRadius: curveData.length > 25 ? 1 : 3.5,
+            pointHoverRadius: 6,
+            fill: true,
+            backgroundColor: gradient,
+            tension: 0.35
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `Net P&L: ₹${ctx.parsed.y.toLocaleString('en-IN')}`
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: "rgba(255,255,255,0.04)" },
+              ticks: { color: "#64748b", font: { size: 10 }, maxRotation: 0 }
+            },
+            y: {
+              grid: { color: "rgba(255,255,255,0.06)" },
+              ticks: {
+                color: "#64748b",
+                font: { size: 10 },
+                callback: (val) => `₹${val.toLocaleString('en-IN')}`
+              }
+            }
+          }
+        }
+      });
+
+      // 2. Win/Loss Donut Chart
+      const donutCtx = document.getElementById("winLossDonutChart").getContext("2d");
+      if (winLossDonutChart) winLossDonutChart.destroy();
+
+      const won = d.accurate_signals || 0;
+      const lost = d.wrong_signals || 0;
+      const active = d.active_signals || 0;
+
+      winLossDonutChart = new Chart(donutCtx, {
+        type: "doughnut",
+        data: {
+          labels: ["Accurate (Won)", "Wrong (Lost)", "Active"],
+          datasets: [{
+            data: [won, lost, active],
+            backgroundColor: ["#00e676", "#ff5252", "#06b6d4"],
+            borderColor: "rgba(14, 20, 32, 0.8)",
+            borderWidth: 3,
+            hoverOffset: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: "bottom",
+              labels: { color: "#94a3b8", font: { size: 11 }, boxWidth: 12 }
+            }
+          },
+          cutout: "68%"
+        }
+      });
+
+      // 3. Trade-by-Trade Returns Bar Chart
+      const barCtx = document.getElementById("tradeBarChart").getContext("2d");
+      if (tradeBarChart) tradeBarChart.destroy();
+
+      const barLabels = chronological.map(t => `${t.strike || ''} ${t.option_type || ''}`);
+      const barData = chronological.map(t => t.pnl_amount || 0);
+      const barColors = barData.map(v => v >= 0 ? "#00e676" : "#ff5252");
+
+      tradeBarChart = new Chart(barCtx, {
+        type: "bar",
+        data: {
+          labels: barLabels,
+          datasets: [{
+            label: "Realized P&L (₹)",
+            data: barData,
+            backgroundColor: barColors,
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `Trade P&L: ₹${ctx.parsed.y.toLocaleString('en-IN')}`
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { color: "#64748b", font: { size: 9 }, maxRotation: 45 }
+            },
+            y: {
+              grid: { color: "rgba(255,255,255,0.06)" },
+              ticks: {
+                color: "#64748b",
+                font: { size: 10 },
+                callback: (val) => `₹${val}`
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderTradesTable(trades) {
+      const tbody = document.getElementById("tradesTableBody");
+      if (!trades.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="10" style="text-align:center;padding:32px;color:var(--text-3);">
+              📊 No signals found in this timeframe. Try selecting a wider slicer period above.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = trades.map((t, idx) => {
+        const dt = (t.created_at || '').replace('T', ' ').slice(0, 16);
+        const isCall = t.signal === 'BUY_CALL';
+        const sigBadge = isCall
+          ? `<span class="history-badge call" style="font-size:0.7rem;">📈 BUY CALL</span>`
+          : `<span class="history-badge put" style="font-size:0.7rem;">📉 BUY PUT</span>`;
+
+        const entryP = t.entry_premium != null ? (+t.entry_premium).toFixed(2) : '—';
+        const exitP  = t.exit_premium  != null ? (+t.exit_premium).toFixed(2)  : entryP;
+        const pnlPct = t.pnl_pct != null ? +t.pnl_pct : 0;
+        const pnlAmt = t.pnl_amount != null ? +t.pnl_amount : 0;
+
+        let outcomeHtml = '';
+        if (t.outcome_tag === 'WON') {
+          outcomeHtml = `<span class="badge-accurate">🎯 ACCURATE (+${pnlPct.toFixed(1)}%)</span>`;
+        } else if (t.outcome_tag === 'LOST') {
+          outcomeHtml = `<span class="badge-wrong">❌ WRONG (${pnlPct.toFixed(1)}%)</span>`;
+        } else if (t.outcome_tag === 'ACTIVE') {
+          outcomeHtml = `<span class="badge-active">⏳ ACTIVE</span>`;
+        } else {
+          outcomeHtml = `<span style="color:var(--text-3);font-weight:700;">➖ BREAKEVEN</span>`;
+        }
+
+        const pnlColor = pnlAmt > 0 ? "var(--call)" : pnlAmt < 0 ? "var(--put)" : "var(--text-3)";
+
+        return `
+          <tr>
+            <td style="font-family:var(--mono);color:var(--text-3);">${t.id || (idx+1)}</td>
+            <td style="white-space:nowrap;font-size:0.75rem;">🕒 ${dt}</td>
+            <td>${sigBadge}</td>
+            <td><strong>${t.symbol}</strong> ${t.strike} ${t.option_type || ''}</td>
+            <td style="font-family:var(--mono);">₹${entryP}</td>
+            <td style="font-family:var(--mono);">₹${exitP}</td>
+            <td style="font-family:var(--mono);color:${pnlColor};font-weight:700;">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%</td>
+            <td style="font-family:var(--mono);color:${pnlColor};font-weight:800;">${pnlAmt >= 0 ? '+' : ''}₹${fmt(pnlAmt)}</td>
+            <td>${outcomeHtml}</td>
+            <td style="font-size:0.73rem;color:var(--text-3);max-width:260px;">${escapeHtml(t.status || 'ACTIVE')}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function filterTradesTable() {
+      const q = (document.getElementById("tradeSearchInput").value || "").toLowerCase().trim();
+      if (!q) {
+        renderTradesTable(rawTrades);
+        return;
+      }
+      const filtered = rawTrades.filter(t => {
+        const text = `${t.id} ${t.symbol} ${t.signal} ${t.strike} ${t.option_type} ${t.status} ${t.created_at}`.toLowerCase();
+        return text.includes(q);
+      });
+      renderTradesTable(filtered);
+    }
+
+    function fmt(n) {
+      if (n == null) return "0.00";
+      return Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // ── Theme Sync ──
+    function toggleTheme() {
+      const isLight = document.body.classList.toggle('light');
+      localStorage.setItem('fao_theme', isLight ? 'light' : 'dark');
+      _applyThemeUI(isLight);
+      // Re-render charts with adapted colors
+      if (rawTrades.length) renderCharts(rawTrades, {
+        accurate_signals: parseInt(document.getElementById("kpiWonCount").textContent.replace(/\D/g, '')) || 0,
+        wrong_signals: parseInt(document.getElementById("kpiLostCount").textContent.replace(/\D/g, '')) || 0,
+        active_signals: 0
+      });
+    }
+
+    function _applyThemeUI(isLight) {
+      const icon = document.getElementById('themeIcon');
+      const label = document.getElementById('themeLabel');
+      if (icon) icon.textContent = isLight ? '☀️' : '🌙';
+      if (label) label.textContent = isLight ? 'Dark' : 'Light';
+    }
+
+    (function() {
+      const saved = localStorage.getItem('fao_theme');
+      if (saved === 'light') {
+        document.body.classList.add('light');
+        _applyThemeUI(true);
+      }
+    })();
+
+    // Initial Load & Auto-Refresh
+    fetchIndexAnalytics();
+    setInterval(() => fetchIndexAnalytics(), 15000);
+  </script>
+</body>
+</html>

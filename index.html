@@ -423,66 +423,12 @@
 
       <!-- Symbol Breakdown -->
       <div id="perfBreakdown" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;"></div>
-    </div>
 
-    <!-- ════════════════════════════════════════════
-         Index Performance & Accuracy Analytics (Nifty 50 & BankNifty Tabs)
-    ════════════════════════════════════════════ -->
-    <div class="panel" style="grid-column: 1 / -1;" id="indexAnalyticsPanel">
-      <div class="panel-title" style="flex-wrap: wrap; gap: 12px; align-items: center;">
-        <div class="panel-title-left">
-          <span>🎯</span> Index Accuracy &amp; Signal History
-        </div>
-
-        <!-- Symbol Tabs: NIFTY 50 vs BANK NIFTY -->
-        <div class="index-analytics-tabs">
-          <button class="index-tab-btn active" id="tabBtnNifty" onclick="switchAnalyticsTab('NIFTY')">
-            <span>📈</span> NIFTY 50
-          </button>
-          <button class="index-tab-btn" id="tabBtnBankNifty" onclick="switchAnalyticsTab('BANKNIFTY')">
-            <span>🏦</span> BANK NIFTY
-          </button>
-        </div>
-
-        <!-- Time Period Slicers: 1 Week, 15 Days, 30 Days, 45 Days, 3 Months -->
-        <div class="slicer-group" style="margin-left: auto;">
-          <span style="font-size: 0.7rem; color: var(--text-3); font-weight: 700; text-transform: uppercase; margin-right: 2px;">Slicer:</span>
-          <button class="slicer-btn active" data-days="5" onclick="setAnalyticsSlicer(5)">1 Week (5D)</button>
-          <button class="slicer-btn" data-days="15" onclick="setAnalyticsSlicer(15)">15 Days</button>
-          <button class="slicer-btn" data-days="30" onclick="setAnalyticsSlicer(30)">30 Days</button>
-          <button class="slicer-btn" data-days="45" onclick="setAnalyticsSlicer(45)">45 Days</button>
-          <button class="slicer-btn" data-days="90" onclick="setAnalyticsSlicer(90)">3 Months</button>
-        </div>
-      </div>
-
-      <!-- Header Banner / Summary Info -->
-      <div id="analyticsHeaderBadge" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 14px; background: rgba(255,255,255,0.02); border-radius: var(--radius-xs); border: 1px solid var(--border); margin: 12px 0 14px;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span id="analyticsIndexBadge" style="font-weight: 800; font-size: 0.88rem; color: var(--text-1);">NIFTY 50</span>
-          <span style="font-size: 0.75rem; color: var(--text-3);">•</span>
-          <span id="analyticsPeriodBadge" style="font-size: 0.75rem; color: var(--accent); font-weight: 600;">Last 1 Week (5 Days)</span>
-        </div>
-        <div id="analyticsNetPnlBadge" style="font-family: var(--mono); font-size: 0.88rem; font-weight: 800; color: var(--text-2);">
-          Net PnL: —
-        </div>
-      </div>
-
-      <!-- KPI Stat Cards (Accuracy, Won, Lost, Profit Factor, Net PnL, Total) -->
-      <div id="analyticsKpis" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 12px; margin-bottom: 16px;">
-        <div style="text-align: center; padding: 20px; color: var(--text-3); grid-column: 1 / -1;">Loading index analytics...</div>
-      </div>
-
-      <!-- Detailed Signal History for the selected Index and Slicer Period -->
-      <div style="border-top: 1px solid var(--border); padding-top: 14px;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-          <div style="font-weight: 700; font-size: 0.85rem; color: var(--text-1); display: flex; align-items: center; gap: 6px;">
-            <span>📜</span> Detailed Trade History (<span id="analyticsCountLabel">0</span>)
-          </div>
-          <span style="font-size: 0.72rem; color: var(--text-3);" id="analyticsDateRangeLabel">Last 5 trading days</span>
-        </div>
-        <div class="analytics-trades-list" id="analyticsTradesList" style="max-height: 420px; overflow-y: auto;">
-          <!-- Filled by JS -->
-        </div>
+      <!-- Action Button: Open Performance History in a New Tab -->
+      <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); display: flex; justify-content: center;">
+        <a href="/performance_analytics.html" target="_blank" class="btn btn-primary" id="btnOpenPerformanceHistory" style="text-decoration:none; display:inline-flex; align-items:center; gap:10px; font-size:0.9rem; font-weight:700; padding:12px 28px; border-radius:10px; box-shadow:0 4px 18px rgba(99,102,241,0.35); transition:all .25s ease;">
+          <span>📊</span> Check Performance History of Signals <span style="font-size:0.8rem;opacity:0.85;">↗</span>
+        </a>
       </div>
     </div>
 
