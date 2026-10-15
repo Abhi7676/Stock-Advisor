@@ -66,7 +66,8 @@ document.addEventListener("DOMContentLoaded", () => {
       await fetch(`${API}/api/signal-history/clear`, { method: "POST" });
       document.getElementById("historyList").innerHTML =
         `<div style="text-align:center;padding:16px;color:var(--text-3);">Signal history cleared.</div>`;
-      fetchPerformanceDashboard();
+      fetchPerformance();
+      fetchIndexAnalytics();
     } catch (e) {
       console.warn("Failed to clear history:", e);
     }
@@ -217,6 +218,7 @@ async function fetchAllData(force = false) {
 
   fetchSignalHistory();
   fetchPerformance();
+  fetchIndexAnalytics();
 
   // If data still not loaded (cold start), schedule a quick retry
   if (!_dataLoaded.NIFTY || !_dataLoaded.BANKNIFTY) {
@@ -674,6 +676,184 @@ function renderPerformance(d) {
   }
 }
 
+// ─── Index Performance & Slicer Analytics ────────────────────
+let currentAnalyticsTab = "NIFTY";
+let currentAnalyticsDays = 5;
+
+function switchAnalyticsTab(sym) {
+  currentAnalyticsTab = sym;
+  document.getElementById("tabBtnNifty")?.classList.toggle("active", sym === "NIFTY");
+  document.getElementById("tabBtnBankNifty")?.classList.toggle("active", sym === "BANKNIFTY");
+  fetchIndexAnalytics();
+}
+
+function setAnalyticsSlicer(days) {
+  currentAnalyticsDays = days;
+  document.querySelectorAll(".slicer-btn").forEach(btn => {
+    btn.classList.toggle("active", parseInt(btn.getAttribute("data-days")) === days);
+  });
+  fetchIndexAnalytics();
+}
+
+async function fetchIndexAnalytics() {
+  try {
+    const r = await fetch(`${API}/api/index-analytics?symbol=${currentAnalyticsTab}&days=${currentAnalyticsDays}`);
+    if (!r.ok) return;
+    const json = await r.json();
+    if (json.status === "ok" && json.data) {
+      renderIndexAnalytics(json.data);
+    }
+  } catch (e) {
+    console.warn("Index analytics fetch failed:", e);
+  }
+}
+
+function renderIndexAnalytics(d) {
+  const kpisEl = document.getElementById("analyticsKpis");
+  const tradesEl = document.getElementById("analyticsTradesList");
+  const indexBadgeEl = document.getElementById("analyticsIndexBadge");
+  const periodBadgeEl = document.getElementById("analyticsPeriodBadge");
+  const netPnlBadgeEl = document.getElementById("analyticsNetPnlBadge");
+  const countLabelEl = document.getElementById("analyticsCountLabel");
+  const dateRangeLabelEl = document.getElementById("analyticsDateRangeLabel");
+
+  if (!kpisEl || !tradesEl) return;
+
+  const symLabel = d.symbol === "NIFTY" ? "NIFTY 50" : "BANK NIFTY";
+  const symIcon = d.symbol === "NIFTY" ? "📈" : "🏦";
+  const periodNames = {
+    5: "Last 1 Week (5 Days)",
+    15: "Last 15 Days",
+    30: "Last 30 Days (1 Month)",
+    45: "Last 45 Days",
+    90: "Last 3 Months (90 Days)"
+  };
+  const periodText = periodNames[d.days] || `Last ${d.days} Days`;
+
+  if (indexBadgeEl) indexBadgeEl.innerHTML = `${symIcon} ${symLabel}`;
+  if (periodBadgeEl) periodBadgeEl.textContent = periodText;
+  if (countLabelEl) countLabelEl.textContent = d.total_signals;
+  if (dateRangeLabelEl) dateRangeLabelEl.textContent = `Cutoff from ${d.cutoff_date || 'N/A'} to Today`;
+
+  const pnlColor = d.net_pnl_inr > 0 ? "var(--call)" : d.net_pnl_inr < 0 ? "var(--put)" : "var(--text-2)";
+  const winRateColor = d.accuracy_rate >= 50 ? "var(--call)" : d.accuracy_rate >= 40 ? "var(--wait)" : "var(--put)";
+
+  if (netPnlBadgeEl) {
+    netPnlBadgeEl.innerHTML = `Net Realized P&amp;L: <span style="color:${pnlColor};font-weight:800;">${d.net_pnl_inr >= 0 ? "+" : ""}₹${fmt(d.net_pnl_inr)}</span>`;
+  }
+
+  // Render KPI cards (accuracy, accurate/wrong signals, win/loss ₹ amounts, net PnL, total)
+  kpisEl.innerHTML = `
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Accuracy Rate</div>
+      <div class="perf-stat-val" style="color:${winRateColor}">${d.accuracy_rate}%</div>
+      <div class="perf-stat-sub">${d.accurate_signals} Won • ${d.wrong_signals} Lost</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Signals Won</div>
+      <div class="perf-stat-val" style="color:var(--call)">🎯 ${d.accurate_signals}</div>
+      <div class="perf-stat-sub">Target (+13%) Hit</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Signals Lost</div>
+      <div class="perf-stat-val" style="color:var(--put)">❌ ${d.wrong_signals}</div>
+      <div class="perf-stat-sub">Stop Loss Hit</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Total Won</div>
+      <div class="perf-stat-val" style="color:var(--call)">+₹${fmt(d.won_amount_inr)}</div>
+      <div class="perf-stat-sub">From ${d.accurate_signals} accurate trades</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Total Lost</div>
+      <div class="perf-stat-val" style="color:var(--put)">-₹${fmt(d.lost_amount_inr)}</div>
+      <div class="perf-stat-sub">From ${d.wrong_signals} wrong trades</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Net Realized P&amp;L</div>
+      <div class="perf-stat-val" style="color:${pnlColor}">
+        ${d.net_pnl_inr >= 0 ? "+" : ""}₹${fmt(d.net_pnl_inr)}
+      </div>
+      <div class="perf-stat-sub">${d.closed_signals} Closed Signals</div>
+    </div>
+
+    <div class="perf-stat-card">
+      <div class="perf-stat-label">Total Generated</div>
+      <div class="perf-stat-val" style="color:var(--cyan)">${d.total_signals}</div>
+      <div class="perf-stat-sub">${d.active_signals > 0 ? `⏳ ${d.active_signals} Active` : "All Closed"}</div>
+    </div>
+  `;
+
+  // Render Detailed Trades List
+  const trades = d.trades || [];
+  if (!trades.length) {
+    tradesEl.innerHTML = `
+      <div style="text-align:center;padding:26px 16px;color:var(--text-3);font-size:0.83rem">
+        📊 <strong>No trade signals recorded for ${symLabel} in ${periodText}</strong><br>
+        <span style="font-size:0.75rem;opacity:0.8">Click a wider slicer button above (15 Days, 30 Days, or 3 Months) to view older history.</span>
+      </div>
+    `;
+    return;
+  }
+
+  tradesEl.innerHTML = trades.map(row => {
+    const isCall = row.signal === "BUY_CALL";
+    const sigClass = isCall ? "call" : "put";
+    const sigLabel = isCall ? "📈 BUY CALL" : "📉 BUY PUT";
+
+    const dt = row.created_at ? row.created_at.replace("T", " ").slice(0, 16) : "—";
+    const entryP = row.entry_premium != null ? (+row.entry_premium).toFixed(2) : "—";
+    const exitP = row.exit_premium != null ? (+row.exit_premium).toFixed(2) : entryP;
+    const pnlPct = row.pnl_pct != null ? +row.pnl_pct : 0;
+    const pnlAmt = row.pnl_amount != null ? +row.pnl_amount : 0;
+
+    let tagHtml = "";
+    if (row.outcome_tag === "WON") {
+      tagHtml = `<span class="analytics-tag-won">🎯 ACCURATE (+${pnlPct.toFixed(1)}%)</span>`;
+    } else if (row.outcome_tag === "LOST") {
+      tagHtml = `<span class="analytics-tag-lost">❌ WRONG (${pnlPct.toFixed(1)}%)</span>`;
+    } else if (row.outcome_tag === "ACTIVE") {
+      tagHtml = `<span class="analytics-tag-active">⏳ ACTIVE</span>`;
+    } else {
+      tagHtml = `<span style="background:rgba(148,163,184,0.15);color:var(--text-2);padding:4px 8px;border-radius:6px;font-size:0.75rem;font-weight:700;">➖ BREAKEVEN</span>`;
+    }
+
+    const pnlColorItem = pnlAmt > 0 ? "var(--call)" : pnlAmt < 0 ? "var(--put)" : "var(--text-3)";
+    const statusNote = row.status || "ACTIVE";
+
+    return `
+      <div class="analytics-trade-item">
+        <div style="display:flex;align-items:center;gap:12px;min-width:0;flex:1;">
+          <span class="history-badge ${sigClass}" style="flex-shrink:0;">${sigLabel}</span>
+          <div style="min-width:0;">
+            <div style="font-weight:700;font-size:0.86rem;color:var(--text-1);">
+              ${row.symbol} &nbsp;${row.strike} ${row.option_type || ""}
+            </div>
+            <div style="font-size:0.73rem;color:var(--text-3);margin-top:2px;">
+              🕒 ${dt} &nbsp;|&nbsp; Entry ₹${entryP} → Exit ₹${exitP}
+            </div>
+            <div style="font-size:0.7rem;color:var(--text-3);opacity:0.8;margin-top:2px;">
+              ${escapeHtml(statusNote)}
+            </div>
+          </div>
+        </div>
+
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="margin-bottom:4px;">${tagHtml}</div>
+          <div style="font-family:var(--mono);font-size:0.82rem;font-weight:800;color:${pnlColorItem};">
+            ${pnlAmt >= 0 ? "+" : ""}₹${pnlAmt.toFixed(0)} PnL
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
 // ─── Signal History ───────────────────────────────────────────
 async function fetchSignalHistory() {
   try {
@@ -803,4 +983,14 @@ function setVal(id, val, cls = "") {
   if (!el) return;
   el.textContent = val;
   el.className = "trade-stat-val" + (cls ? " " + cls : "");
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }

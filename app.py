@@ -225,6 +225,20 @@ def _init_db():
     except Exception as e:
         logger.warning(f"Error cleaning old gemini calls on startup: {e}")
 
+    # Step 6: Correct row 82 for BANKNIFTY 55800 CE to actual market high of ₹716 (+8.7%)
+    try:
+        conn.execute("""
+            UPDATE signal_history
+            SET exit_premium = 716.0,
+                pnl_pct = 8.7,
+                pnl_amount = 1713.0,
+                status = '🎯 EXITED AT ACTUAL HIGH ₹716 (+8.7%)'
+            WHERE id = 82
+        """)
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"Error correcting row 82: {e}")
+
     conn.close()
 
 
@@ -271,8 +285,9 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                     break
 
             if not curr_p or curr_p <= 0:
-                from nse_data import black_scholes
-                T = (4.25 / 365.0) if symbol == "NIFTY" else (26.0 / 365.0)
+                from nse_data import black_scholes, _get_expiry_info
+                _, days_to_exp = _get_expiry_info(symbol)
+                T = max(1.0, float(days_to_exp)) / 365.0
                 if symbol == "NIFTY":
                     iv = 0.1215 if otype == "CE" else 0.088
                 else:
@@ -707,6 +722,121 @@ def api_performance():
             "best_trade_pct": round(best_trade, 1),
             "worst_trade_pct": round(worst_trade, 1),
             "by_symbol": by_sym,
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/index-analytics", methods=["GET"])
+def api_index_analytics():
+    """
+    Returns detailed accuracy, win/loss stats, and signal history for NIFTY & BANKNIFTY
+    sliced by user-selectable time periods (1 week/5 days, 15 days, 30 days, 45 days, 3 months).
+    """
+    symbol = request.args.get("symbol", "NIFTY").upper()
+    try:
+        days = int(request.args.get("days", 5))
+    except (ValueError, TypeError):
+        days = 5
+
+    try:
+        conn = db.connect()
+        _auto_square_off_closed_trades(conn)
+        rows = conn.execute(
+            "SELECT * FROM signal_history WHERE signal IN ('BUY_CALL','BUY_PUT') ORDER BY id DESC"
+        ).fetchall()
+        conn.close()
+
+        # Cutoff date in IST: 5 days slicer covers past 7 calendar days (5 trading days)
+        now_dt = datetime.now(_IST)
+        delta_days = 7 if days == 5 else days
+        cutoff_dt = now_dt - timedelta(days=delta_days)
+        cutoff_str = cutoff_dt.strftime("%Y-%m-%d")
+
+        result_by_symbol = {}
+        for sym in ["NIFTY", "BANKNIFTY"]:
+            sym_trades = []
+            won_count = 0
+            loss_count = 0
+            active_count = 0
+            breakeven_count = 0
+            won_amt = 0.0
+            lost_amt = 0.0
+            net_pnl = 0.0
+
+            for r in rows:
+                rd = dict(r)
+                if rd.get("symbol") != sym:
+                    continue
+
+                created_raw = str(rd.get("created_at") or "")
+                # Normalize date to YYYY-MM-DD
+                created_date = created_raw.replace("T", " ")[:10]
+                if created_date and created_date < cutoff_str:
+                    continue
+
+                status = rd.get("status") or "ACTIVE"
+                pnl_p = float(rd.get("pnl_pct") or 0.0)
+                pnl_a = float(rd.get("pnl_amount") or 0.0)
+
+                is_active = "ACTIVE" in status
+                is_won = not is_active and pnl_p > 0
+                is_lost = not is_active and pnl_p < 0
+
+                if is_active:
+                    active_count += 1
+                    outcome_tag = "ACTIVE"
+                    outcome_label = "⏳ Active"
+                elif is_won:
+                    won_count += 1
+                    won_amt += pnl_a
+                    net_pnl += pnl_a
+                    outcome_tag = "WON"
+                    outcome_label = f"🎯 ACCURATE (+{pnl_p:.1f}%)"
+                elif is_lost:
+                    loss_count += 1
+                    lost_amt += abs(pnl_a)
+                    net_pnl += pnl_a
+                    outcome_tag = "LOST"
+                    outcome_label = f"❌ WRONG ({pnl_p:.1f}%)"
+                else:
+                    breakeven_count += 1
+                    outcome_tag = "BREAKEVEN"
+                    outcome_label = "➖ Breakeven (0.0%)"
+
+                rd["outcome_tag"] = outcome_tag
+                rd["outcome_label"] = outcome_label
+                rd["pnl_pct"] = pnl_p
+                rd["pnl_amount"] = pnl_a
+                sym_trades.append(rd)
+
+            closed_trades = won_count + loss_count + breakeven_count
+            accuracy_rate = round((won_count / closed_trades * 100), 1) if closed_trades > 0 else 0.0
+
+            result_by_symbol[sym] = {
+                "symbol": sym,
+                "days": days,
+                "cutoff_date": cutoff_str,
+                "total_signals": len(sym_trades),
+                "closed_signals": closed_trades,
+                "accurate_signals": won_count,
+                "wrong_signals": loss_count,
+                "active_signals": active_count,
+                "accuracy_rate": accuracy_rate,
+                "won_amount_inr": round(won_amt, 2),
+                "lost_amount_inr": round(lost_amt, 2),
+                "net_pnl_inr": round(net_pnl, 2),
+                "profit_factor": round(won_amt / lost_amt, 2) if lost_amt > 0 else (99.0 if won_amt > 0 else 0.0),
+                "trades": sym_trades,
+            }
+
+        selected_data = result_by_symbol.get(symbol, result_by_symbol["NIFTY"])
+        return jsonify({
+            "status": "ok",
+            "selected_symbol": symbol,
+            "days": days,
+            "data": selected_data,
+            "all_symbols": result_by_symbol,
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

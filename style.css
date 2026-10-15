@@ -1301,3 +1301,151 @@ body.light .perf-breakdown-card:hover {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* ─── Index Analytics Tabs & Slicers ─────────────────────────── */
+.index-analytics-tabs {
+  display: flex;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.index-tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-2);
+  padding: 6px 14px;
+  border-radius: var(--radius-xs);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.index-tab-btn:hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.index-tab-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.35);
+}
+
+.slicer-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.slicer-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.slicer-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-1);
+  border-color: var(--border-hi);
+}
+
+.slicer-btn.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+.analytics-trade-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.015);
+  border-radius: var(--radius-xs);
+  margin-bottom: 8px;
+  transition: background 0.2s ease;
+  gap: 12px;
+}
+
+.analytics-trade-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.analytics-tag-won {
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--call);
+  border: 1px solid rgba(0, 230, 118, 0.35);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.analytics-tag-lost {
+  background: rgba(255, 82, 82, 0.15);
+  color: var(--put);
+  border: 1px solid rgba(255, 82, 82, 0.35);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.analytics-tag-active {
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--cyan);
+  border: 1px solid rgba(6, 182, 212, 0.35);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+body.light .index-analytics-tabs {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+body.light .index-tab-btn {
+  color: var(--text-2);
+}
+body.light .index-tab-btn.active {
+  background: var(--call);
+  border-color: var(--call);
+}
+body.light .slicer-btn {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  color: var(--text-2);
+}
+body.light .slicer-btn.active {
+  background: var(--call);
+  color: #fff;
+}
+body.light .analytics-trade-item {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.06);
+}
+body.light .analytics-trade-item:hover {
+  background: #f8fafc;
+}
+
