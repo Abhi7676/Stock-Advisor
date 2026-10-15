@@ -215,6 +215,10 @@ def _init_db():
                 WHERE id = ?
             """, (-sl_cap, fixed_exit, fixed_pct, f"🛑 STOP LOSS EXIT (₹{int(sl_cap)} loss, {fixed_pct}%)", rid))
         conn.commit()
+    except Exception as e:
+        logger.warning(f"Error repairing glitched SL rows: {e}")
+        conn.rollback()
+
     # Step 5: Clean up old gemini API call records from previous days
     try:
         db.clean_old_gemini_calls()
