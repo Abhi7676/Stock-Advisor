@@ -191,27 +191,28 @@ def _init_db():
     except Exception:
         conn.rollback()
 
-    # Step 4: Repair any glitched rows where stop-loss exceeded the ₹1300 max cap
+    # Step 4: Repair any historical glitched rows where stop-loss exceeded the max cap
     try:
         rows_to_fix = conn.execute("""
             SELECT id, symbol, entry_premium FROM signal_history
-            WHERE pnl_amount < -1350 AND status LIKE '%STOP LOSS%'
+            WHERE pnl_amount < -2600 AND status LIKE '%STOP LOSS%'
         """).fetchall()
         for r in rows_to_fix:
             rid = r["id"]
             sym = r["symbol"]
             ep = float(r["entry_premium"] or 100.0)
             lot = 65 if sym == "NIFTY" else 30
-            fixed_exit = round(max(0.5, ep - (1300.0 / lot)), 2)
+            sl_cap = 2200.0 if sym == "NIFTY" else 2300.0
+            fixed_exit = round(max(0.5, ep - (sl_cap / lot)), 2)
             fixed_pct = round(((fixed_exit - ep) / ep) * 100.0, 1)
             conn.execute("""
                 UPDATE signal_history
-                SET pnl_amount = -1300.0,
+                SET pnl_amount = ?,
                     exit_premium = ?,
                     pnl_pct = ?,
                     status = ?
                 WHERE id = ?
-            """, (fixed_exit, fixed_pct, f"🛑 STOP LOSS EXIT (₹1300 loss, {fixed_pct}%)", rid))
+            """, (-sl_cap, fixed_exit, fixed_pct, f"🛑 STOP LOSS EXIT (₹{int(sl_cap)} loss, {fixed_pct}%)", rid))
         conn.commit()
     except Exception as e:
         logger.warning(f"Error repairing glitched SL rows: {e}")
@@ -221,8 +222,8 @@ def _init_db():
 
 
 def _get_stop_loss_amount(symbol: str) -> float:
-    """Returns max loss cap in INR: ₹1600 for NIFTY, ₹2300 for BANKNIFTY."""
-    return float(getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, getattr(config, "STOP_LOSS_AMOUNT_INR", 1600)))
+    """Returns max loss cap in INR: ₹2200 for NIFTY, ₹2300 for BANKNIFTY."""
+    return float(getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, getattr(config, "STOP_LOSS_AMOUNT_INR", 2200)))
 
 
 def _log_trade_signal(symbol: str, signal: dict, analysis: dict):

@@ -787,7 +787,7 @@ def _enrich_signal(signal: dict, analysis: dict) -> dict:
     # Ensure target premium guarantees at least +13% profit on premium
     min_target = round(prem * (1 + config.PROFIT_TARGET_PCT), 2) if prem else 0
     target_prem = max(round(signal.get("target_premium", 0) or 0, 2), min_target)
-    sl_max = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, 1600)
+    sl_max = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, 2200)
     sl_points = sl_max / lot_size
     sl_prem = round(max(0.5, prem - sl_points), 2) if prem else 0
     signal["target_premium"] = target_prem
@@ -1050,26 +1050,71 @@ def _rule_based_signal(analysis: dict) -> dict:
     ENTRY_THRESHOLD = getattr(config, "ENTRY_THRESHOLDS", {}).get(symbol, getattr(config, "ENTRY_THRESHOLD", 3))
 
     # ── Gate 4: 5-min Trend Confirmation (BOTH Supertrend AND MACD must agree) ──
-    # Changed from OR → AND to prevent false entries in choppy/sideways markets.
-    # OR logic was firing on noise: e.g. bullish MACD alone with NEUTRAL supertrend
-    # is a high-whipsaw scenario that was responsible for the recent consecutive losses.
     st_signal  = ta.get("supertrend_signal", "NEUTRAL")
     macd_bias  = ta.get("macd_bias", "NEUTRAL")
     trend_ok_bull = (st_signal == "BUY") and (macd_bias == "BULLISH")    # BOTH must agree
     trend_ok_bear = (st_signal == "SELL") and (macd_bias == "BEARISH")   # BOTH must agree
 
-    # ── Gate 4.5: RSI Directional Alignment ───────────────
-    # RSI should confirm the direction we're about to trade.
-    # BUY CALL needs RSI > 50 (bullish territory, not oversold bounce)
-    # BUY PUT needs RSI < 50 (bearish territory, not oversold reversal)
-    # This prevents buying PUTs when RSI is already oversold (likely to bounce)
-    # and buying CALLs when RSI is overbought (likely to pull back).
+    # ── 15-min Higher Timeframe Trend Alignment ──
+    st_15m   = ta_15m.get("supertrend_signal", "NEUTRAL")
+    macd_15m = ta_15m.get("macd_bias", "NEUTRAL")
+    trend_15m_bull = (st_15m == "BUY" or macd_15m == "BULLISH") and (st_15m != "SELL" and macd_15m != "BEARISH")
+    trend_15m_bear = (st_15m == "SELL" or macd_15m == "BEARISH") and (st_15m != "BUY" and macd_15m != "BULLISH")
+    trend_15m_reason_bull = (
+        f"15-min Supertrend={st_15m}, MACD={macd_15m} ✅ actively bullish"
+        if trend_15m_bull else
+        f"15-min higher timeframe not confirmed (Supertrend={st_15m}, MACD={macd_15m})"
+    )
+    trend_15m_reason_bear = (
+        f"15-min Supertrend={st_15m}, MACD={macd_15m} ✅ actively bearish"
+        if trend_15m_bear else
+        f"15-min higher timeframe not confirmed (Supertrend={st_15m}, MACD={macd_15m})"
+    )
+
+    # ── Gate 4.5: RSI Directional Alignment & Super-Momentum Filter ───────
+    # Standard: BUY CALL needs RSI > 50 (bullish territory) and RSI <= 70 (not overbought).
+    # Super-Momentum Extension: During strong institutional trend days (PCR >= 1.25, 5m ST BUY,
+    # EMA Golden Cross, 15m trend confirmed), allow RSI up to 80.0 so runaway rallies aren't missed!
+    # Extreme ceiling: RSI > 80 is blow-off top risk where pullbacks occur.
     rsi_val = float(ta.get("rsi", 50))
     rsi_signal = ta.get("rsi_signal", "NEUTRAL")
-    rsi_ok_bull = (rsi_val > 50) and (rsi_signal != "OVERBOUGHT")   # Bullish but not at ceiling
-    rsi_ok_bear = (rsi_val < 50) and (rsi_signal != "OVERSOLD")     # Bearish but not at floor
-    rsi_reason_bull = f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bullish territory"
-    rsi_reason_bear = f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bearish territory"
+    ema_cross = ta.get("ema_crossover", "NEUTRAL")
+
+    # Super-momentum bull criteria
+    is_super_bull = (pcr >= 1.25) and (st_signal == "BUY") and (ema_cross == "GOLDEN") and trend_15m_bull
+    rsi_cap_bull = 80.0 if is_super_bull else 70.0
+    rsi_ok_bull = (rsi_val > 50.0) and (rsi_val <= rsi_cap_bull)
+
+    # Super-momentum bear criteria
+    is_super_bear = (pcr <= 0.85) and (st_signal == "SELL") and (ema_cross == "DEATH") and trend_15m_bear
+    rsi_floor_bear = 22.0 if is_super_bear else 30.0
+    rsi_ok_bear = (rsi_val < 50.0) and (rsi_val >= rsi_floor_bear)
+
+    if rsi_ok_bull:
+        rsi_reason_bull = (
+            f"RSI={rsi_val:.1f} ✅ Super-Momentum bull trend (PCR={pcr}, ceiling {rsi_cap_bull:.0f})"
+            if is_super_bull and rsi_val > 70.0 else
+            f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bullish territory"
+        )
+    else:
+        rsi_reason_bull = (
+            f"RSI={rsi_val:.1f} (Extreme Overbought >{rsi_cap_bull:.0f}) — risk of pullback"
+            if rsi_val > rsi_cap_bull else
+            f"RSI={rsi_val:.1f} — needs to be >50 for BUY CALL"
+        )
+
+    if rsi_ok_bear:
+        rsi_reason_bear = (
+            f"RSI={rsi_val:.1f} ✅ Super-Momentum breakdown (PCR={pcr}, floor {rsi_floor_bear:.0f})"
+            if is_super_bear and rsi_val < 30.0 else
+            f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bearish territory"
+        )
+    else:
+        rsi_reason_bear = (
+            f"RSI={rsi_val:.1f} (Extreme Oversold <{rsi_floor_bear:.0f}) — risk of bounce"
+            if rsi_val < rsi_floor_bear else
+            f"RSI={rsi_val:.1f} — needs to be <50 for BUY PUT"
+        )
 
     # ── Gate 5: India VIX Filter ───────────────────────────
     # VIX > 20 → genuinely extreme volatility (crash/crisis level) — options
@@ -1139,36 +1184,49 @@ def _rule_based_signal(analysis: dict) -> dict:
     min_floor_pts = 22.0 if symbol == "NIFTY" else 65.0
     needed_pts_call = max(min_floor_pts, (call_prem * config.PROFIT_TARGET_PCT) / 0.50) if call_prem > 0 else min_floor_pts
     needed_pts_put = max(min_floor_pts, (put_prem * config.PROFIT_TARGET_PCT) / 0.50) if put_prem > 0 else min_floor_pts
+    min_clearance = 15.0 if symbol == "NIFTY" else 40.0
 
     # Headroom check for BUY CALL: Spot to Call Wall (Resistance)
     if call_wall_strike > ltp:
         headroom_call = call_wall_strike - ltp
-        profit_potential_ok_bull = (headroom_call >= needed_pts_call) and (call_prem >= 30.0)
+        profit_potential_ok_bull = (headroom_call >= needed_pts_call) and (headroom_call >= min_clearance) and (call_prem >= 30.0)
         potential_reason_bull = (
             f"Headroom to Call Wall ({call_wall_strike:.0f}) is {headroom_call:.0f} pts "
             f"✅ (exceeds {needed_pts_call:.0f} pts needed for +13% profit)"
             if profit_potential_ok_bull else
             f"Capped upside: Only {headroom_call:.0f} pts to Call Wall ({call_wall_strike:.0f}) — "
-            f"needs {needed_pts_call:.0f} pts for +13% profit. Risk of reversal before target."
+            f"needs {needed_pts_call:.0f} pts for +13% profit. Risk of reversal directly at resistance."
         )
     else:
-        profit_potential_ok_bull = call_prem >= 30.0
-        potential_reason_bull = f"Call Wall breakout detected ✅ — open headroom for +13% target"
+        last_close = float(ta.get("last_close", ltp) or ltp)
+        is_breakout_confirmed = last_close >= call_wall_strike
+        profit_potential_ok_bull = (call_prem >= 30.0) and is_breakout_confirmed
+        potential_reason_bull = (
+            f"Call Wall breakout confirmed ✅ (Close {last_close:.0f} >= {call_wall_strike:.0f}) — open headroom for +13% target"
+            if profit_potential_ok_bull else
+            f"False breakout risk: Spot reached {call_wall_strike:.0f} but 5m candle has not closed above it."
+        )
 
     # Room check for BUY PUT: Spot to Put Wall (Support)
     if put_wall_strike > 0 and put_wall_strike < ltp:
         headroom_put = ltp - put_wall_strike
-        profit_potential_ok_bear = (headroom_put >= needed_pts_put) and (put_prem >= 30.0)
+        profit_potential_ok_bear = (headroom_put >= needed_pts_put) and (headroom_put >= min_clearance) and (put_prem >= 30.0)
         potential_reason_bear = (
             f"Room to Put Wall ({put_wall_strike:.0f}) is {headroom_put:.0f} pts "
             f"✅ (exceeds {needed_pts_put:.0f} pts needed for +13% profit)"
             if profit_potential_ok_bear else
             f"Capped downside: Only {headroom_put:.0f} pts to Put Wall ({put_wall_strike:.0f}) — "
-            f"needs {needed_pts_put:.0f} pts for +13% profit. Risk of bounce before target."
+            f"needs {needed_pts_put:.0f} pts for +13% profit. Risk of bounce directly at support."
         )
     else:
-        profit_potential_ok_bear = put_prem >= 30.0
-        potential_reason_bear = f"Put Wall breakdown detected ✅ — open room for +13% target"
+        last_close = float(ta.get("last_close", ltp) or ltp)
+        is_breakdown_confirmed = last_close <= put_wall_strike
+        profit_potential_ok_bear = (put_prem >= 30.0) and is_breakdown_confirmed
+        potential_reason_bear = (
+            f"Put Wall breakdown confirmed ✅ (Close {last_close:.0f} <= {put_wall_strike:.0f}) — open room for +13% target"
+            if profit_potential_ok_bear else
+            f"False breakdown risk: Spot reached {put_wall_strike:.0f} but 5m candle has not closed below it."
+        )
 
     if (bias_score >= ENTRY_THRESHOLD and window_ok and not loss_blocked
             and trend_ok_bull and rsi_ok_bull and vix_ok and max_pain_ok and trend_15m_bull
@@ -1223,9 +1281,9 @@ def _rule_based_signal(analysis: dict) -> dict:
         if bias_score <= -ENTRY_THRESHOLD and not trend_ok_bear:
             wait_reasons.append(f"5-min trend split: Supertrend={st_signal} & MACD={macd_bias} — need BOTH to agree for BUY PUT")
         if bias_score >= ENTRY_THRESHOLD and trend_ok_bull and not rsi_ok_bull:
-            wait_reasons.append(f"RSI conflict for BUY CALL: RSI={rsi_val:.1f} ({rsi_signal}) — needs to be >50 and not Overbought")
+            wait_reasons.append(f"RSI conflict for BUY CALL: {rsi_reason_bull}")
         if bias_score <= -ENTRY_THRESHOLD and trend_ok_bear and not rsi_ok_bear:
-            wait_reasons.append(f"RSI conflict for BUY PUT: RSI={rsi_val:.1f} ({rsi_signal}) — needs to be <50 and not Oversold (likely bounce)")
+            wait_reasons.append(f"RSI conflict for BUY PUT: {rsi_reason_bear}")
         if bias_score >= ENTRY_THRESHOLD and trend_ok_bull and rsi_ok_bull and not trend_15m_bull:
             wait_reasons.append(f"15-min trend conflict: {trend_15m_reason_bull} — waiting for higher-timeframe alignment")
         if bias_score <= -ENTRY_THRESHOLD and trend_ok_bear and rsi_ok_bear and not trend_15m_bear:
@@ -1287,7 +1345,7 @@ def _rule_based_signal(analysis: dict) -> dict:
 
     # Use config-driven target/SL amounts
     target_prem = round(premium * (1 + config.PROFIT_TARGET_PCT), 2) if premium else 0
-    sl_max = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, 1600)
+    sl_max = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(symbol, 2200)
     sl_points = sl_max / lot_size
     sl_prem = round(max(0.5, premium - sl_points), 2) if premium else 0
 

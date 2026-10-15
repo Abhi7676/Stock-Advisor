@@ -50,7 +50,7 @@ def _build_telegram_html(signal: dict) -> str:
     dir_label    = "BUY CALL (CE)" if is_call else "BUY PUT (PE)"
     conf_badge   = "🔥 High Conviction" if conf >= 80 else "⚡ Moderate Conviction"
 
-    sl_max    = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(signal.get("symbol"), 1600)
+    sl_max    = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(signal.get("symbol"), 2200)
     bias_sign = f"+{bias}" if bias > 0 else f"{bias}"
 
     # Extract short 1-line key technical rationale
@@ -111,7 +111,7 @@ def _build_telegram_plain(signal: dict) -> str:
     dir_emoji    = "📈" if is_call else "📉"
     dir_label    = "BUY CALL (CE)" if is_call else "BUY PUT (PE)"
     conf_badge   = "High Conviction" if conf >= 80 else "Moderate Conviction"
-    sl_max       = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(sym, 1600)
+    sl_max       = getattr(config, "STOP_LOSS_AMOUNTS", {}).get(sym, 2200)
     bias_sign    = f"+{bias}" if bias > 0 else f"{bias}"
 
     # Extract short 1-line key technical rationale

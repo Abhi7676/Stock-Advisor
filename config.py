@@ -101,10 +101,10 @@ RISK_PER_TRADE_PCT = 0.5    # Max 50% of budget in one trade = ₹5000
 PROFIT_TARGET_PCT = 0.13    # Target 13% on premium — closes trade when 13% profit is made
 STOP_LOSS_PCT = 0.08        # Default fallback percentage
 STOP_LOSS_AMOUNTS = {
-    "NIFTY": 1600,       # ₹1600 max loss cap for Nifty 50 (lot size 65)
+    "NIFTY": 2200,       # ₹2200 max loss cap for Nifty 50 (lot size 65)
     "BANKNIFTY": 2300,   # ₹2300 max loss cap for Bank Nifty (lot size 30)
 }
-STOP_LOSS_AMOUNT_INR = 1600   # Default fallback
+STOP_LOSS_AMOUNT_INR = 2200   # Default fallback
 ENTRY_THRESHOLD = 3         # Default composite bias score (scale: -5 to +5)
 ENTRY_THRESHOLDS = {
     "NIFTY": 3,             # Nifty 50: ±3 score required (scale: -5 to +5)
