@@ -287,7 +287,7 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
             if not curr_p or curr_p <= 0:
                 from nse_data import black_scholes, _get_expiry_info
                 _, days_to_exp = _get_expiry_info(symbol)
-                T = max(1.0, float(days_to_exp)) / 365.0
+                T = max(0.5, float(days_to_exp)) / 365.0
                 if symbol == "NIFTY":
                     iv = 0.1215 if otype == "CE" else 0.088
                 else:
@@ -308,10 +308,10 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
 
             if pnl_pct >= 13.0 or (target_p > 0 and curr_p >= target_p):
                 # ── 13% Profit Target Hit — Book Profit Immediately ──
-                exit_p = target_p if target_p > 0 else round(entry_p * 1.13, 2)
-                pnl_pct = 13.0
+                exit_p = round(max(curr_p, target_p if target_p > 0 else entry_p * 1.13), 2)
+                pnl_pct = round(((exit_p - entry_p) / entry_p) * 100.0, 1)
                 pnl_amt = round((exit_p - entry_p) * lot_size, 2)
-                new_status = "✅ PROFIT TARGET HIT +13.0% 🎯"
+                new_status = f"✅ PROFIT TARGET HIT (+{pnl_pct}%) 🎯"
                 closed_at = now_iso
                 is_win = True
             elif pnl_amt <= -sl_amount:

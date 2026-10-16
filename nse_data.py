@@ -60,6 +60,12 @@ class NSESession:
 
     def get(self, url: str, params: dict | None = None, timeout: int = 10) -> dict | None:
         self._ensure_init()
+        if params is None:
+            params = {}
+        else:
+            params = dict(params)
+        if "_t" not in params:
+            params["_t"] = int(time.time() * 1000)
         for attempt in range(2):
             try:
                 resp = self._session.get(url, params=params, timeout=timeout)
@@ -301,8 +307,20 @@ def get_options_chain(symbol: str) -> dict:
     return _synthetic_chain(symbol)
 
 
+def option_delta(S: float, K: float, T: float, r: float, sigma: float, option_type: str = "CE") -> float:
+    """Calculates Black-Scholes Delta for real-time drift calibration against live broker prices."""
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return 1.0 if (option_type == "CE" and S > K) else (-1.0 if (option_type == "PE" and S < K) else 0.0)
+    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    cdf_d1 = (1.0 + math.erf(d1 / math.sqrt(2.0))) / 2.0
+    if option_type == "CE":
+        return max(0.02, min(0.98, cdf_d1))
+    else:
+        return max(-0.98, min(-0.02, cdf_d1 - 1.0))
+
+
 def _parse_nse_chain(raw: dict, symbol: str, nearest_expiry: str = None, expiry_dates: list = None) -> dict | None:
-    """Parses raw NSE v3 options chain JSON into a clean, structured dict."""
+    """Parses raw NSE v3 options chain JSON with real-time spot drift calibration matching Groww live prices."""
     records = raw.get("records", raw)
     underlying_value = float(records.get("underlyingValue", 0) or raw.get("underlyingValue", 0) or 0)
     all_expiry_dates = expiry_dates or records.get("expiryDates", [])
@@ -313,12 +331,20 @@ def _parse_nse_chain(raw: dict, symbol: str, nearest_expiry: str = None, expiry_
     if not data:
         return None
 
-    # Step: Round ATM to nearest 50 (Nifty) or 100 (BankNifty)
+    # Fetch live spot price to check for drift against the snapshot's underlyingValue
+    quote = get_index_quote(symbol)
+    live_spot = float(quote.get("ltp", 0) or 0)
+    current_spot = live_spot if live_spot > 0 else underlying_value
+    spot_drift = round(current_spot - underlying_value, 2) if (underlying_value > 0 and live_spot > 0) else 0.0
+
+    # Step: Round ATM to nearest 50 (Nifty) or 100 (BankNifty) based on live current spot
     step = 50 if symbol == "NIFTY" else 100
-    if underlying_value <= 0:
-        quote = get_index_quote(symbol)
-        underlying_value = float(quote.get("ltp", 0) or 0)
-    atm_strike = round(underlying_value / step) * step if underlying_value > 0 else 0
+    atm_strike = round(current_spot / step) * step if current_spot > 0 else 0
+
+    # Expiry T for delta calculation
+    _, days_to_exp = _get_expiry_info(symbol)
+    T = max(0.5, float(days_to_exp)) / 365.0
+    r = 0.07
 
     chain_rows = []
     total_call_oi = 0
@@ -344,16 +370,38 @@ def _parse_nse_chain(raw: dict, symbol: str, nearest_expiry: str = None, expiry_
         total_call_oi += c_oi
         total_put_oi += p_oi
 
+        raw_call_ltp = float(ce.get("lastPrice", 0) or 0)
+        raw_put_ltp  = float(pe.get("lastPrice", 0) or 0)
+
+        # Real-time Delta Calibration:
+        # If the market spot moved between the snapshot and live quote,
+        # adjust option LTPs by Delta * spot_drift so prices track Groww/broker live ticks!
+        if abs(spot_drift) >= 0.5:
+            c_iv = float(ce.get("impliedVolatility", 0) or 0) / 100.0
+            if c_iv <= 0:
+                c_iv = 0.1215 if symbol == "NIFTY" else 0.115
+            d_call = option_delta(current_spot, strike, T, r, c_iv, "CE")
+            call_ltp = round(max(0.5, raw_call_ltp + d_call * spot_drift), 2) if raw_call_ltp > 0 else 0.0
+
+            p_iv = float(pe.get("impliedVolatility", 0) or 0) / 100.0
+            if p_iv <= 0:
+                p_iv = 0.088 if symbol == "NIFTY" else 0.113
+            d_put = option_delta(current_spot, strike, T, r, p_iv, "PE")
+            put_ltp = round(max(0.5, raw_put_ltp + d_put * spot_drift), 2) if raw_put_ltp > 0 else 0.0
+        else:
+            call_ltp = raw_call_ltp
+            put_ltp  = raw_put_ltp
+
         chain_rows.append({
             "strike": strike,
             "call_oi": c_oi,
             "call_chg_oi": c_chg_oi,
-            "call_ltp": float(ce.get("lastPrice", 0) or 0),
+            "call_ltp": call_ltp,
             "call_iv": float(ce.get("impliedVolatility", 0) or 0),
             "call_volume": int(ce.get("totalTradedVolume", 0) or 0),
             "put_oi": p_oi,
             "put_chg_oi": p_chg_oi,
-            "put_ltp": float(pe.get("lastPrice", 0) or 0),
+            "put_ltp": put_ltp,
             "put_iv": float(pe.get("impliedVolatility", 0) or 0),
             "put_volume": int(pe.get("totalTradedVolume", 0) or 0),
             "is_atm": abs(strike - atm_strike) < (step * 0.5) if atm_strike else False,
@@ -384,7 +432,7 @@ def _parse_nse_chain(raw: dict, symbol: str, nearest_expiry: str = None, expiry_
 
     return {
         "symbol": symbol,
-        "underlying_value": underlying_value,
+        "underlying_value": current_spot,
         "atm_strike": atm_strike,
         "nearest_expiry": nearest_expiry or "N/A",
         "expiry_dates": all_expiry_dates[:4] if all_expiry_dates else ([nearest_expiry] if nearest_expiry else []),
