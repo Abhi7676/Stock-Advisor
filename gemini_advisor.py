@@ -1085,48 +1085,44 @@ def _rule_based_signal(analysis: dict) -> dict:
         f"15-min higher timeframe not confirmed (Supertrend={st_15m}, MACD={macd_15m})"
     )
 
-    # ── Gate 4.5: RSI Directional Alignment & Super-Momentum Filter ───────
-    # Standard: BUY CALL needs RSI > 50 (bullish territory) and RSI <= 70 (not overbought).
-    # Super-Momentum Extension: During strong institutional trend days (PCR >= 1.25, 5m ST BUY,
-    # EMA Golden Cross, 15m trend confirmed), allow RSI up to 80.0 so runaway rallies aren't missed!
-    # Extreme ceiling: RSI > 80 is blow-off top risk where pullbacks occur.
+    # ── Gate 4.5: RSI Directional Alignment (Strict Mode) ──────────────────
+    # BUY CALL: RSI must be in the 50–70 range.
+    #   > 50 confirms bullish momentum.
+    #   <= 70 ensures we are NOT buying at an overbought exhaustion peak.
+    # BUY PUT: RSI must be in the 30–50 range.
+    #   < 50 confirms bearish momentum.
+    #   >= 30 ensures we are NOT selling at an oversold bounce point.
+    # NOTE: Super-Momentum RSI extension (up to 80) has been REMOVED.
+    # RSI > 70 is statistically a blow-off exhaustion zone where reversals are most likely.
+    # Lesson: 23150 CE trade on 2026-10-16 passed RSI=76.2 via super-momentum and hit stop loss.
     rsi_val = float(ta.get("rsi", 50))
     rsi_signal = ta.get("rsi_signal", "NEUTRAL")
-    ema_cross = ta.get("ema_crossover", "NEUTRAL")
 
-    # Super-momentum bull criteria
-    is_super_bull = (pcr >= 1.25) and (st_signal == "BUY") and (ema_cross == "GOLDEN") and trend_15m_bull
-    rsi_cap_bull = 80.0 if is_super_bull else 70.0
-    rsi_ok_bull = (rsi_val > 50.0) and (rsi_val <= rsi_cap_bull)
+    # Strict ceiling: RSI 50–70 for BUY CALL (no exceptions)
+    RSI_BULL_FLOOR = 50.0
+    RSI_BULL_CEIL  = 70.0
+    rsi_ok_bull = (rsi_val > RSI_BULL_FLOOR) and (rsi_val <= RSI_BULL_CEIL)
 
-    # Super-momentum bear criteria
-    is_super_bear = (pcr <= 0.85) and (st_signal == "SELL") and (ema_cross == "DEATH") and trend_15m_bear
-    rsi_floor_bear = 22.0 if is_super_bear else 30.0
-    rsi_ok_bear = (rsi_val < 50.0) and (rsi_val >= rsi_floor_bear)
+    # Strict floor: RSI 30–50 for BUY PUT (no exceptions)
+    RSI_BEAR_CEIL  = 50.0
+    RSI_BEAR_FLOOR = 30.0
+    rsi_ok_bear = (rsi_val < RSI_BEAR_CEIL) and (rsi_val >= RSI_BEAR_FLOOR)
 
     if rsi_ok_bull:
-        rsi_reason_bull = (
-            f"RSI={rsi_val:.1f} ✅ Super-Momentum bull trend (PCR={pcr}, ceiling {rsi_cap_bull:.0f})"
-            if is_super_bull and rsi_val > 70.0 else
-            f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bullish territory"
-        )
+        rsi_reason_bull = f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bullish territory (50–70 zone)"
     else:
         rsi_reason_bull = (
-            f"RSI={rsi_val:.1f} (Extreme Overbought >{rsi_cap_bull:.0f}) — risk of pullback"
-            if rsi_val > rsi_cap_bull else
+            f"RSI={rsi_val:.1f} OVERBOUGHT (>{RSI_BULL_CEIL:.0f}) — exhaustion zone, high reversal risk. BLOCKED."
+            if rsi_val > RSI_BULL_CEIL else
             f"RSI={rsi_val:.1f} — needs to be >50 for BUY CALL"
         )
 
     if rsi_ok_bear:
-        rsi_reason_bear = (
-            f"RSI={rsi_val:.1f} ✅ Super-Momentum breakdown (PCR={pcr}, floor {rsi_floor_bear:.0f})"
-            if is_super_bear and rsi_val < 30.0 else
-            f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bearish territory"
-        )
+        rsi_reason_bear = f"RSI={rsi_val:.1f} ({rsi_signal}) ✅ bearish territory (30–50 zone)"
     else:
         rsi_reason_bear = (
-            f"RSI={rsi_val:.1f} (Extreme Oversold <{rsi_floor_bear:.0f}) — risk of bounce"
-            if rsi_val < rsi_floor_bear else
+            f"RSI={rsi_val:.1f} OVERSOLD (<{RSI_BEAR_FLOOR:.0f}) — bounce risk. BLOCKED."
+            if rsi_val < RSI_BEAR_FLOOR else
             f"RSI={rsi_val:.1f} — needs to be <50 for BUY PUT"
         )
 
@@ -1195,10 +1191,13 @@ def _rule_based_signal(analysis: dict) -> dict:
     call_wall_strike = float(oi.get("call_resistance", 0) or 0)
     put_wall_strike = float(oi.get("put_support", 0) or 0)
 
-    min_floor_pts = 22.0 if symbol == "NIFTY" else 65.0
+    # min_clearance: Minimum spot distance from the nearest OI wall (Call Wall for BUY CALL).
+    # Raised from 15→25 pts (NIFTY) and 40→60 pts (BANKNIFTY) to avoid entries too close to resistance.
+    # Example blocked: Spot 23,143 vs 23,150 strike = only 7 pts buffer → reversal risk was extreme.
+    min_floor_pts = 26.0 if symbol == "NIFTY" else 70.0
     needed_pts_call = max(min_floor_pts, (call_prem * config.PROFIT_TARGET_PCT) / 0.50) if call_prem > 0 else min_floor_pts
     needed_pts_put = max(min_floor_pts, (put_prem * config.PROFIT_TARGET_PCT) / 0.50) if put_prem > 0 else min_floor_pts
-    min_clearance = 15.0 if symbol == "NIFTY" else 40.0
+    min_clearance = 25.0 if symbol == "NIFTY" else 60.0
 
     # Headroom check for BUY CALL: Spot to Call Wall (Resistance)
     if call_wall_strike > ltp:
