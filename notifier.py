@@ -21,6 +21,28 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
+# ─── Multi-Recipient Configuration ───────────────────────────────────────────
+# Add additional recipients by setting TELEGRAM_BOT_TOKEN_2 / TELEGRAM_CHAT_ID_2
+# (and optionally _3, _4, ...) in your Render environment variables.
+# If TELEGRAM_BOT_TOKEN_2 is empty, the primary bot token is reused for that recipient.
+TELEGRAM_RECIPIENTS = [
+    {
+        "name":    "Primary (You)",
+        "token":   os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(),
+        "chat_id": os.environ.get("TELEGRAM_CHAT_ID", "").strip(),
+    },
+    {
+        "name":    "Sammed",
+        "token":   (os.environ.get("TELEGRAM_BOT_TOKEN_2") or os.environ.get("TELEGRAM_BOT_TOKEN", "")).strip(),
+        "chat_id": os.environ.get("TELEGRAM_CHAT_ID_2", "").strip(),
+    },
+]
+# Filter out empty recipients (not yet configured)
+_ACTIVE_RECIPIENTS = [
+    r for r in TELEGRAM_RECIPIENTS
+    if r["token"] and r["chat_id"]
+]
+
 
 def _ist_now() -> str:
     try:
@@ -157,45 +179,68 @@ _build_telegram_message = _build_telegram_html
 
 
 def _get_credentials():
+    """Returns (token, chat_id) for the primary recipient (backward compat)."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     return token, chat_id
 
 
+def _get_all_recipients() -> list:
+    """Returns list of all active (token, chat_id, name) tuples — primary + any extras."""
+    primary_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    recipients = []
+    # Always include primary if configured
+    primary_chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if primary_token and primary_chat:
+        recipients.append({"name": "Primary", "token": primary_token, "chat_id": primary_chat})
+    # Additional recipients: _2, _3, _4 ...
+    for i in range(2, 6):
+        extra_token   = (os.environ.get(f"TELEGRAM_BOT_TOKEN_{i}") or primary_token or "").strip()
+        extra_chat_id = os.environ.get(f"TELEGRAM_CHAT_ID_{i}", "").strip()
+        extra_name    = os.environ.get(f"TELEGRAM_RECIPIENT_NAME_{i}", f"Recipient {i}").strip()
+        if extra_token and extra_chat_id:
+            recipients.append({"name": extra_name, "token": extra_token, "chat_id": extra_chat_id})
+    return recipients
+
+
 def _send_telegram(signal: dict):
-    """Internal — sends the Telegram message. Runs in a background thread."""
-    token, chat_id = _get_credentials()
-    if not token or not chat_id:
+    """Internal — sends the Telegram message to ALL configured recipients. Runs in a background thread."""
+    import requests
+    recipients = _get_all_recipients()
+    if not recipients:
         logger.debug("Telegram not configured — set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID")
         return
-    try:
-        import requests
-        html_text = _build_telegram_html(signal)
-        resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": html_text, "parse_mode": "HTML"},
-            timeout=12,
-        )
-        if resp.ok:
-            logger.info(
-                f"✅ Telegram HTML alert sent: {signal.get('symbol')} "
-                f"{signal.get('signal')} @ ₹{signal.get('entry_premium')} (Confidence: {signal.get('confidence')}%)"
+    html_text  = _build_telegram_html(signal)
+    plain_text = _build_telegram_plain(signal)
+    for r in recipients:
+        token   = r["token"]
+        chat_id = r["chat_id"]
+        name    = r["name"]
+        try:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": html_text, "parse_mode": "HTML"},
+                timeout=12,
             )
-            return
+            if resp.ok:
+                logger.info(
+                    f"✅ Telegram alert sent to {name}: {signal.get('symbol')} "
+                    f"{signal.get('signal')} @ ₹{signal.get('entry_premium')} (Confidence: {signal.get('confidence')}%)"
+                )
+                continue
+            logger.warning(f"Telegram HTML failed for {name} ({resp.status_code}) — retrying plain text")
+            fallback_resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": plain_text},
+                timeout=12,
+            )
+            if fallback_resp.ok:
+                logger.info(f"✅ Telegram plain-text alert delivered to {name}: {signal.get('symbol')}")
+            else:
+                logger.warning(f"Telegram alert delivery failed for {name}: {fallback_resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Telegram alert error for {name}: {e}")
 
-        logger.warning(f"Telegram HTML parse returned {resp.status_code}: {resp.text[:200]} — retrying plain text")
-        plain_text = _build_telegram_plain(signal)
-        fallback_resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": plain_text},
-            timeout=12,
-        )
-        if fallback_resp.ok:
-            logger.info(f"✅ Telegram plain-text alert delivered successfully: {signal.get('symbol')}")
-        else:
-            logger.warning(f"Telegram alert delivery failed: {fallback_resp.text[:300]}")
-    except Exception as e:
-        logger.warning(f"Telegram alert error: {e}")
 
 
 def send_signal_alert(signal: dict):
@@ -210,46 +255,64 @@ def send_signal_alert(signal: dict):
 
 
 def test_telegram_connection() -> dict:
-    """Send a test signal alert to verify Telegram credentials."""
-    token, chat_id = _get_credentials()
-    if not token or not chat_id:
+    """Send a TEST ALERT to ALL configured recipients to verify Telegram credentials."""
+    import requests
+    recipients = _get_all_recipients()
+    if not recipients:
         return {
             "status": "error",
             "message": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing in environment variables."
         }
-    try:
-        import requests
-        sample_signal = {
-            "symbol": "NIFTY",
-            "signal": "BUY_CALL",
-            "strike": 22550,
-            "option_type": "CE",
-            "entry_premium": 35.15,
-            "target_premium": 40.50,
-            "stop_loss_premium": 10.53,
-            "confidence": 85,
-            "nearest_expiry": "13-Oct-2026",
-            "bias_score": 4,
-            "ltp": 22527.45,
-            "reasoning": "• 5-min Trend: Supertrend BUY & MACD BULLISH both agree\n• PCR: 1.22 Bullish put writing floor",
-        }
-        text = _build_telegram_html(sample_signal)
-        resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=12,
-        )
-        if resp.ok:
-            return {"status": "ok", "message": "Test alert delivered to Telegram successfully!"}
-        # Fallback test with plain text
-        plain = _build_telegram_plain(sample_signal)
-        f_resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": plain},
-            timeout=12,
-        )
-        if f_resp.ok:
-            return {"status": "ok", "message": "Test alert delivered using plain-text format!"}
-        return {"status": "error", "message": f"Telegram API error {resp.status_code}: {resp.text}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    now = _ist_now()
+    test_text_html = (
+        "\U0001f9ea <b>\u26a0\ufe0f TEST ALERT \u2014 F&amp;O Signal Advisor</b>\n"
+        "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+        "\u2705 <b>Telegram connection is working!</b>\n"
+        "\U0001f4f1 This is a <b>test notification</b> triggered from the app dashboard.\n"
+        "<i>Real trade signals will be sent in this same format when a BUY CALL or BUY PUT signal is confirmed.</i>\n"
+        "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+        f"\u23f1 <b>Sent at:</b> {now}"
+    )
+    test_text_plain = (
+        f"\U0001f9ea TEST ALERT \u2014 F&O Signal Advisor\n"
+        f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+        f"\u2705 Telegram connection is working!\n"
+        f"This is a test notification triggered from the app dashboard.\n"
+        f"Real trade signals will be sent in this same format.\n"
+        f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+        f"\u23f1 Sent at: {now}"
+    )
+    delivered = []
+    failed    = []
+    for r in recipients:
+        token   = r["token"]
+        chat_id = r["chat_id"]
+        name    = r["name"]
+        try:
+            resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": test_text_html, "parse_mode": "HTML"},
+                timeout=12,
+            )
+            if resp.ok:
+                delivered.append(name)
+                continue
+            # Fallback plain
+            f_resp = requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": test_text_plain},
+                timeout=12,
+            )
+            if f_resp.ok:
+                delivered.append(f"{name} (plain text)")
+            else:
+                failed.append(f"{name}: {f_resp.status_code}")
+        except Exception as e:
+            failed.append(f"{name}: {e}")
+
+    if delivered and not failed:
+        return {"status": "ok",    "message": f"Test alert delivered to: {', '.join(delivered)}"}
+    if delivered:
+        return {"status": "ok",    "message": f"Delivered to {', '.join(delivered)}. Failed: {', '.join(failed)}"}
+    return     {"status": "error", "message": f"All deliveries failed: {', '.join(failed)}"}
+
