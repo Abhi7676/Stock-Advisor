@@ -165,6 +165,7 @@ def _background_refresh():
 # ─── Signal History DB ────────────────────────────────────────────────────────
 
 def _init_db():
+    conn = None
     try:
         conn = db.connect()
         # Step 1: Create table and commit immediately — so subsequent rollbacks
@@ -173,76 +174,81 @@ def _init_db():
         conn.execute(db.create_gemini_calls_table_ddl(conn.is_pg))
         conn.commit()
 
-    # Step 2: Schema migration — add new columns if they don't exist yet.
-    # Uses IF NOT EXISTS (PostgreSQL 9.6+, SQLite 3.37+) to avoid errors.
-    # Each column is committed independently so one failure can't abort the rest.
-    for col, col_type in [
-        ("exit_premium", "REAL"), ("pnl_pct", "REAL"), ("pnl_amount", "REAL"),
-        ("status", "TEXT DEFAULT 'ACTIVE'"), ("closed_at", "TEXT")
-    ]:
+        # Step 2: Schema migration — add new columns if they don't exist yet.
+        # Uses IF NOT EXISTS (PostgreSQL 9.6+, SQLite 3.37+) to avoid errors.
+        # Each column is committed independently so one failure can't abort the rest.
+        for col, col_type in [
+            ("exit_premium", "REAL"), ("pnl_pct", "REAL"), ("pnl_amount", "REAL"),
+            ("status", "TEXT DEFAULT 'ACTIVE'"), ("closed_at", "TEXT")
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE signal_history ADD COLUMN IF NOT EXISTS {col} {col_type}")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+        # Step 3: Clean up old WAIT rows so history only contains actual trade recommendations
         try:
-            conn.execute(f"ALTER TABLE signal_history ADD COLUMN IF NOT EXISTS {col} {col_type}")
+            conn.execute("DELETE FROM signal_history WHERE signal = 'WAIT'")
             conn.commit()
         except Exception:
             conn.rollback()
 
-    # Step 3: Clean up old WAIT rows so history only contains actual trade recommendations
-    try:
-        conn.execute("DELETE FROM signal_history WHERE signal = 'WAIT'")
-        conn.commit()
-    except Exception:
-        conn.rollback()
+        # Step 4: Repair any historical glitched rows where stop-loss exceeded the max cap
+        try:
+            rows_to_fix = conn.execute("""
+                SELECT id, symbol, entry_premium FROM signal_history
+                WHERE pnl_amount < -2600 AND status LIKE '%STOP LOSS%'
+            """).fetchall()
+            for r in rows_to_fix:
+                rid = r["id"]
+                sym = r["symbol"]
+                ep = float(r["entry_premium"] or 100.0)
+                lot = 65 if sym == "NIFTY" else 30
+                sl_cap = 2200.0 if sym == "NIFTY" else 2300.0
+                fixed_exit = round(max(0.5, ep - (sl_cap / lot)), 2)
+                fixed_pct = round(((fixed_exit - ep) / ep) * 100.0, 1)
+                conn.execute("""
+                    UPDATE signal_history
+                    SET pnl_amount = ?,
+                        exit_premium = ?,
+                        pnl_pct = ?,
+                        status = ?
+                    WHERE id = ?
+                """, (-sl_cap, fixed_exit, fixed_pct, f"🛑 STOP LOSS EXIT (₹{int(sl_cap)} loss, {fixed_pct}%)", rid))
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"Error repairing glitched SL rows: {e}")
+            conn.rollback()
 
-    # Step 4: Repair any historical glitched rows where stop-loss exceeded the max cap
-    try:
-        rows_to_fix = conn.execute("""
-            SELECT id, symbol, entry_premium FROM signal_history
-            WHERE pnl_amount < -2600 AND status LIKE '%STOP LOSS%'
-        """).fetchall()
-        for r in rows_to_fix:
-            rid = r["id"]
-            sym = r["symbol"]
-            ep = float(r["entry_premium"] or 100.0)
-            lot = 65 if sym == "NIFTY" else 30
-            sl_cap = 2200.0 if sym == "NIFTY" else 2300.0
-            fixed_exit = round(max(0.5, ep - (sl_cap / lot)), 2)
-            fixed_pct = round(((fixed_exit - ep) / ep) * 100.0, 1)
+        # Step 5: Clean up old gemini API call records from previous days
+        try:
+            db.clean_old_gemini_calls()
+        except Exception as e:
+            logger.warning(f"Error cleaning old gemini calls on startup: {e}")
+
+        # Step 6: Correct row 82 for BANKNIFTY 55800 CE to actual market high of ₹716 (+8.7%)
+        try:
             conn.execute("""
                 UPDATE signal_history
-                SET pnl_amount = ?,
-                    exit_premium = ?,
-                    pnl_pct = ?,
-                    status = ?
-                WHERE id = ?
-            """, (-sl_cap, fixed_exit, fixed_pct, f"🛑 STOP LOSS EXIT (₹{int(sl_cap)} loss, {fixed_pct}%)", rid))
-        conn.commit()
-    except Exception as e:
-        logger.warning(f"Error repairing glitched SL rows: {e}")
-        conn.rollback()
+                SET exit_premium = 716.0,
+                    pnl_pct = 8.7,
+                    pnl_amount = 1713.0,
+                    status = '🎯 EXITED AT ACTUAL HIGH ₹716 (+8.7%)'
+                WHERE id = 82
+            """)
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"Error correcting row 82: {e}")
 
-    # Step 5: Clean up old gemini API call records from previous days
-    try:
-        db.clean_old_gemini_calls()
-    except Exception as e:
-        logger.warning(f"Error cleaning old gemini calls on startup: {e}")
-
-    # Step 6: Correct row 82 for BANKNIFTY 55800 CE to actual market high of ₹716 (+8.7%)
-    try:
-        conn.execute("""
-            UPDATE signal_history
-            SET exit_premium = 716.0,
-                pnl_pct = 8.7,
-                pnl_amount = 1713.0,
-                status = '🎯 EXITED AT ACTUAL HIGH ₹716 (+8.7%)'
-            WHERE id = 82
-        """)
-        conn.commit()
-    except Exception as e:
-        logger.warning(f"Error correcting row 82: {e}")
-
-        conn.close()
     except Exception as e:
         logger.warning(f"DB init completed with notice: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _get_stop_loss_amount(symbol: str) -> float:
