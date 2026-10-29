@@ -165,12 +165,13 @@ def _background_refresh():
 # ─── Signal History DB ────────────────────────────────────────────────────────
 
 def _init_db():
-    conn = db.connect()
-    # Step 1: Create table and commit immediately — so subsequent rollbacks
-    # (from failed ALTER TABLE on existing columns) don't undo the creation.
-    conn.execute(db.create_table_ddl())
-    conn.execute(db.create_gemini_calls_table_ddl())
-    conn.commit()
+    try:
+        conn = db.connect()
+        # Step 1: Create table and commit immediately — so subsequent rollbacks
+        # (from failed ALTER TABLE on existing columns) don't undo the creation.
+        conn.execute(db.create_table_ddl(conn.is_pg))
+        conn.execute(db.create_gemini_calls_table_ddl(conn.is_pg))
+        conn.commit()
 
     # Step 2: Schema migration — add new columns if they don't exist yet.
     # Uses IF NOT EXISTS (PostgreSQL 9.6+, SQLite 3.37+) to avoid errors.
@@ -239,7 +240,9 @@ def _init_db():
     except Exception as e:
         logger.warning(f"Error correcting row 82: {e}")
 
-    conn.close()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"DB init completed with notice: {e}")
 
 
 def _get_stop_loss_amount(symbol: str) -> float:
@@ -389,39 +392,51 @@ def _log_trade_signal(symbol: str, signal: dict, analysis: dict):
                     logger.warning(f"Cooldown parse error: {ce}")
 
             entry_p = signal.get("entry_premium", 0)
-            conn.execute("""
-                INSERT INTO signal_history
-                (symbol, signal, confidence, strike, option_type, entry_premium,
-                 target_premium, sl_premium, exit_premium, pnl_pct, pnl_amount,
-                 ltp, bias_score, reasoning, source, status, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (
-                symbol,
-                sig_name,
-                signal.get("confidence"),
-                signal.get("strike"),
-                signal.get("option_type"),
-                entry_p,
-                signal.get("target_premium"),
-                signal.get("stop_loss_premium"),
-                entry_p,
-                0.0,
-                0.0,
-                analysis.get("ltp"),
-                signal.get("bias_score"),
-                signal.get("reasoning"),
-                signal.get("source"),
-                "ACTIVE",
-                _now_ist(),
-            ))
-            # ★ Fire instant alert (Telegram + Email) in background threads
-            send_signal_alert(signal)
-            logger.info(f"New signal logged + alerts triggered: {symbol} {sig_name}")
+            try:
+                conn.execute("""
+                    INSERT INTO signal_history
+                    (symbol, signal, confidence, strike, option_type, entry_premium,
+                     target_premium, sl_premium, exit_premium, pnl_pct, pnl_amount,
+                     ltp, bias_score, reasoning, source, status, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    symbol,
+                    sig_name,
+                    signal.get("confidence"),
+                    signal.get("strike"),
+                    signal.get("option_type"),
+                    entry_p,
+                    signal.get("target_premium"),
+                    signal.get("stop_loss_premium"),
+                    entry_p,
+                    0.0,
+                    0.0,
+                    analysis.get("ltp"),
+                    signal.get("bias_score"),
+                    signal.get("reasoning"),
+                    signal.get("source"),
+                    "ACTIVE",
+                    _now_ist(),
+                ))
+                conn.commit()
+            except Exception as ie:
+                logger.warning(f"Could not insert trade into DB: {ie}")
 
-        conn.commit()
-        conn.close()
+            # ★ Fire instant alert (Telegram + Email) in background threads
+            # Guaranteed to dispatch even if DB encountered an issue
+            try:
+                send_signal_alert(signal)
+                logger.info(f"New signal logged + alerts triggered: {symbol} {sig_name}")
+            except Exception as ae:
+                logger.error(f"Failed to trigger signal alerts: {ae}")
+
+        try:
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
     except Exception as e:
-        logger.warning(f"Trade log tracking failed: {e}")
+        logger.warning(f"Trade log tracking notice: {e}")
 
 
 # ─── REST API Routes ──────────────────────────────────────────────────────────
@@ -965,11 +980,17 @@ def api_telegram_test():
     return jsonify(result), status_code
 
 
+@app.route("/api/db-status", methods=["GET"])
+def api_db_status():
+    """Returns database status: Neon PostgreSQL vs Temporary SQLite fallback."""
+    return jsonify({"status": "ok", "database": db.get_db_status()})
+
+
 @app.route("/api/debug", methods=["GET"])
 def api_debug():
     """Returns raw live data for debugging — compare with Groww."""
     from nse_data import get_index_quote as giq, _nse
-    result = {}
+    result = {"database": db.get_db_status()}
     for sym in ["NIFTY", "BANKNIFTY"]:
         q = giq(sym)
         with _cache_lock:

@@ -17,6 +17,13 @@ except ImportError:
     pass
 
 
+import time
+
+_neon_offline_until = 0.0
+_neon_last_error = None
+_sqlite_schema_ready = False
+
+
 def get_database_url() -> str:
     url = os.environ.get("DATABASE_URL", "").strip()
     if url.startswith("postgres://"):
@@ -25,7 +32,63 @@ def get_database_url() -> str:
 
 
 def is_postgres() -> bool:
-    return bool(get_database_url())
+    """True if DATABASE_URL is configured and not currently in offline cooldown."""
+    url = get_database_url()
+    return bool(url and time.time() >= _neon_offline_until)
+
+
+def get_db_status() -> dict:
+    """Returns database engine health, whether Neon is active or temporarily on SQLite."""
+    url = get_database_url()
+    has_neon = bool(url)
+    is_pg = is_postgres()
+    return {
+        "engine": "Neon PostgreSQL" if is_pg else "Temporary Local SQLite",
+        "neon_configured": has_neon,
+        "neon_active": is_pg,
+        "fallback_active": has_neon and not is_pg,
+        "neon_offline_cooldown_remaining_sec": max(0, int(_neon_offline_until - time.time())),
+        "neon_last_error": _neon_last_error,
+    }
+
+
+def _ensure_sqlite_tables(conn):
+    """Guarantees SQLite schema exists so queries never fail on fallback."""
+    global _sqlite_schema_ready
+    if _sqlite_schema_ready:
+        return
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS signal_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT, signal TEXT, confidence INTEGER,
+                strike INTEGER, option_type TEXT, entry_premium REAL,
+                target_premium REAL, sl_premium REAL, exit_premium REAL,
+                pnl_pct REAL, pnl_amount REAL, ltp REAL,
+                bias_score REAL, reasoning TEXT, source TEXT,
+                status TEXT DEFAULT 'ACTIVE', created_at TEXT, closed_at TEXT
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS gemini_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                symbol TEXT,
+                model TEXT,
+                status TEXT,
+                prompt TEXT,
+                response_raw TEXT,
+                inference_time_sec REAL,
+                error TEXT,
+                parsed_signal TEXT,
+                sdk_used TEXT
+            )
+        """)
+        conn.commit()
+        _sqlite_schema_ready = True
+    except Exception as e:
+        logger.warning(f"Could not auto-ensure SQLite tables: {e}")
 
 
 class _Cursor:
@@ -43,44 +106,71 @@ class _Cursor:
 class Connection:
     """
     Unified connection object.
-    - sqlite3 mode: conn.execute() works natively, rows are sqlite3.Row objects.
-    - psycopg2 mode: conn.execute() proxied through cursor, rows are RealDictRow (dict-like).
-    Both support row["column_name"] and dict(row).
+    - Neon PostgreSQL mode when available and within quota.
+    - Automatically falls back to SQLite when Neon is paused, expired, or down.
+    - Seamlessly retries and resumes Neon once monthly quota resets.
     """
 
     def __init__(self):
+        global _neon_offline_until, _neon_last_error
         url = get_database_url()
-        self._pg = bool(url)
-        if self._pg:
-            import psycopg2
-            import psycopg2.extras
-            self._conn = psycopg2.connect(
-                url,
-                cursor_factory=psycopg2.extras.RealDictCursor,
-            )
-            self._conn.autocommit = False
-        else:
+        self._pg = False
+        self._conn = None
+
+        if url and time.time() >= _neon_offline_until:
+            try:
+                import psycopg2
+                import psycopg2.extras
+                # Fast timeout (4s) prevents thread hangs if Neon compute is paused / quota exceeded
+                self._conn = psycopg2.connect(
+                    url,
+                    connect_timeout=4,
+                    cursor_factory=psycopg2.extras.RealDictCursor,
+                )
+                self._conn.autocommit = False
+                self._pg = True
+                _neon_offline_until = 0.0
+                _neon_last_error = None
+            except Exception as e:
+                _neon_last_error = str(e)
+                # Wait 60 seconds before probing Neon again so subsequent requests are instant
+                _neon_offline_until = time.time() + 60.0
+                logger.warning(
+                    f"⚠️ Neon PostgreSQL unavailable or monthly quota exceeded ({e}). "
+                    f"Routing to temporary local SQLite. Will auto-retry Neon in 60s."
+                )
+
+        if not self._pg:
             import sqlite3
             import config as _cfg
-            self._conn = sqlite3.connect(_cfg.DB_FILE)
+            self._conn = sqlite3.connect(_cfg.DB_FILE, timeout=10.0)
             self._conn.row_factory = sqlite3.Row
+            _ensure_sqlite_tables(self._conn)
+
+    @property
+    def is_pg(self) -> bool:
+        """True if this active connection is connected to PostgreSQL."""
+        return self._pg
 
     # ── sqlite3-compatible execute() ────────────────────────────────────
     def execute(self, query: str, params=()):
         if self._pg:
             cur = self._conn.cursor()
             # psycopg2 uses % as its format-string escape char.
-            # Escape any literal % in the SQL first (e.g. LIKE 'ACTIVE%' → 'ACTIVE%%'),
-            # then replace SQLite-style ? placeholders with PostgreSQL %s.
             pg_query = query.replace("%", "%%").replace("?", "%s")
             try:
                 cur.execute(pg_query, params)
-            except Exception:
-                # PostgreSQL marks the whole transaction as aborted on any error.
-                # Rollback immediately so the connection is reusable.
+                return _Cursor(cur)
+            except Exception as e:
                 self._conn.rollback()
+                err_str = str(e).lower()
+                # If connection dropped or quota exhausted mid-query, mark Neon offline for 60s
+                if any(w in err_str for w in ["connection", "closed", "terminated", "quota", "limit", "suspended"]):
+                    global _neon_offline_until, _neon_last_error
+                    _neon_last_error = str(e)
+                    _neon_offline_until = time.time() + 60.0
+                    logger.warning(f"Neon connection dropped mid-query ({e}). Next requests will route to SQLite.")
                 raise
-            return _Cursor(cur)
         return self._conn.execute(query, params)
 
     def commit(self):
@@ -104,13 +194,15 @@ class Connection:
 
 
 def connect() -> Connection:
-    """Return a unified DB connection (PostgreSQL or SQLite)."""
+    """Return a unified DB connection (PostgreSQL or SQLite fallback)."""
     return Connection()
 
 
-def create_table_ddl() -> str:
+def create_table_ddl(is_pg: bool = None) -> str:
     """Return the correct CREATE TABLE statement for the active DB engine."""
-    if is_postgres():
+    if is_pg is None:
+        is_pg = is_postgres()
+    if is_pg:
         return """
             CREATE TABLE IF NOT EXISTS signal_history (
                 id SERIAL PRIMARY KEY,
@@ -135,9 +227,11 @@ def create_table_ddl() -> str:
     """
 
 
-def create_gemini_calls_table_ddl() -> str:
+def create_gemini_calls_table_ddl(is_pg: bool = None) -> str:
     """Return the correct CREATE TABLE statement for the gemini_calls table."""
-    if is_postgres():
+    if is_pg is None:
+        is_pg = is_postgres()
+    if is_pg:
         return """
             CREATE TABLE IF NOT EXISTS gemini_calls (
                 id SERIAL PRIMARY KEY,
@@ -168,6 +262,7 @@ def create_gemini_calls_table_ddl() -> str:
             sdk_used TEXT
         )
     """
+
 
 
 def _get_today_ist_str() -> str:
